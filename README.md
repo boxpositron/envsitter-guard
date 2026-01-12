@@ -76,9 +76,6 @@ Add the plugin package to your OpenCode config.
 }
 ```
 
-Notes:
-- OpenCode installs npm plugins automatically using Bun at startup.
-- If you prefer, you can omit `@latest` and you’ll still get the latest by default: `"plugin": ["envsitter-guard"]`.
 
 ### Option B: local plugin file (project-level)
 
@@ -139,15 +136,6 @@ npm run typecheck
 ```
 
 There are currently no lint or test scripts in this repo.
-
-## Publishing notes (npm)
-
-You said you plan to publish as `envsitter-guard@0.0.1`, but want installs to always use latest.
-
-- Publishing a version like `0.0.1` is normal.
-- For end users, recommend installing/loading `envsitter-guard@latest` (or just `envsitter-guard`) so they get the newest published version.
-
-Before publishing, double-check that the package entrypoint is compatible with how OpenCode loads npm plugins (OpenCode installs via Bun and loads the package as a module). If you change packaging (build output, exports), keep `.opencode/plugin/envsitter-guard.ts` as a thin re-export only.
 
 ## License
 
