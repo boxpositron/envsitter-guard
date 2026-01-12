@@ -1,21 +1,40 @@
 {
   "name": "envsitter-guard",
   "version": "0.0.1",
-  "private": true,
+  "description": "OpenCode plugin that prevents agents/tools from reading or editing sensitive .env* files, while still allowing safe inspection via EnvSitter.",
+  "license": "MIT",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "build:test": "tsc -p tsconfig.test.json",
+    "test": "npm run build:test && node --test dist-test/test/*.test.js",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.1.14",
+    "envsitter": "^0.0.1"
+  },
   "devDependencies": {
-    "@opencode-ai/plugin": "*",
     "@types/node": "*",
     "husky": "^9.1.7",
     "typescript": "*"
   },
-  "dependencies": {
-    "envsitter": "*"
-  },
-  "scripts": {
-    "typecheck": "tsc -p tsconfig.json",
-    "build:test": "tsc -p tsconfig.test.json",
-    "test": "npm run build:test && node --test dist-test/test/*.test.js",
-    "prepare": "husky"
+  "publishConfig": {
+    "access": "public"
   }
 }

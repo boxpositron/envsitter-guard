@@ -135,7 +135,7 @@ npm ci
 npm run typecheck
 ```
 
-There are currently no lint or test scripts in this repo.
+There are currently no lint scripts in this repo. Run tests with `npm test`.
 
 ## License
 
