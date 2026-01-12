@@ -40,17 +40,18 @@ This repo does not emit JS as part of its normal workflow.
 
 ### Tests
 
-- No test runner/config is configured in the root project (`package.json` has no `test` script).
+Tests use Node’s built-in test runner, compiled via `tsc` into `dist-test/`.
 
-If/when tests are added, prefer Node’s built-in test runner (matches existing ecosystem usage):
-- Run all tests:
-  - `node --test`
+- Run all tests (builds then runs):
+  - `npm test`
+- Build test output only:
+  - `npm run build:test`
 - Run a single test file:
-  - `node --test path/to/some.test.js`
-- Run a single test by name/pattern:
-  - `node --test --test-name-pattern "pattern" path/to/some.test.js`
+  - `npm run build:test && node --test dist-test/test/envsitter-guard.hook.test.js`
 
-Note: This repo is TypeScript-only and `tsconfig.json` uses `noEmit: true`. If you add tests, ensure the test runner can execute them (either compile first, or use a TS-capable runner) and document the chosen approach.
+Pre-commit checks are enforced via Husky:
+- `npm install` installs the git hook.
+- `.husky/pre-commit` runs `npm run typecheck` and `npm test`.
 
 ## TypeScript / module conventions
 
