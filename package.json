@@ -27,7 +27,7 @@
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.1.14",
-    "envsitter": "^0.0.1"
+    "envsitter": "^0.0.2"
   },
   "devDependencies": {
     "@types/node": "*",
