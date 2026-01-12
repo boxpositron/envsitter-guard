@@ -1,0 +1,16 @@
+{
+  "name": "envsitter-guard",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@opencode-ai/plugin": "*",
+    "@types/node": "*",
+    "typescript": "*"
+  },
+  "dependencies": {
+    "envsitter": "*"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}
