@@ -2,62 +2,9 @@
 
 OpenCode plugin that prevents agents/tools from reading or editing sensitive `.env*` files, while still allowing safe inspection via EnvSitter (keys + deterministic fingerprints; never values).
 
-## Why
+## Quickstart (OpenCode)
 
-Accidentally printing `.env` contents is one of the easiest ways for an agentic workflow to leak secrets into:
-
-- chat transcripts
-- logs/tool output
-- commits/patches
-- screenshots / shared sessions
-
-`envsitter-guard` blocks the risky operations and points users to safe alternatives.
-
-## What it does
-
-This plugin does two things:
-
-1. Adds safe tools:
-   - `envsitter_keys`: list keys in a dotenv file (no values)
-   - `envsitter_fingerprint`: hash/fingerprint one key’s value (no value)
-2. Blocks sensitive file access via OpenCode tool hooks:
-   - blocks `read` of sensitive `.env*` paths
-   - blocks `edit` / `write` / `patch` of sensitive `.env*` paths
-   - blocks access to `.envsitter/pepper`
-
-`.env.example` is explicitly allowed.
-
-## Tools
-
-### `envsitter_keys`
-
-Lists keys in a dotenv file.
-
-- Input: `{ "filePath"?: string }` (defaults to `.env`)
-- Output: JSON `{ file, keys }`
-
-Example (inside OpenCode):
-
-```json
-{ "tool": "envsitter_keys", "args": { "filePath": ".env" } }
-```
-
-### `envsitter_fingerprint`
-
-Computes a deterministic fingerprint of a single key.
-
-- Input: `{ "filePath"?: string, "key": string }` (filePath defaults to `.env`)
-- Output: JSON `{ file, key, result }`
-
-Example (inside OpenCode):
-
-```json
-{ "tool": "envsitter_fingerprint", "args": { "filePath": ".env", "key": "DATABASE_URL" } }
-```
-
-## Install & enable in OpenCode
-
-OpenCode supports loading plugins either from local files or from npm.
+OpenCode supports loading plugins from npm or local plugin files.
 
 Reference docs:
 - https://opencode.ai/docs/plugins/
@@ -76,6 +23,141 @@ Add the plugin package to your OpenCode config.
 }
 ```
 
+Restart OpenCode after updating config.
+
+## Why
+
+Accidentally printing `.env` contents is one of the easiest ways for an agentic workflow to leak secrets into:
+
+- chat transcripts
+- logs/tool output
+- commits/patches
+- screenshots / shared sessions
+
+`envsitter-guard` blocks risky operations and points you to safe alternatives.
+
+## What it does
+
+This plugin provides safe EnvSitter-backed tools and blocks sensitive file access via OpenCode tool hooks.
+
+### Safe tools (no values)
+
+These tools never return raw `.env` values:
+
+- `envsitter_keys`: list keys in a dotenv file
+- `envsitter_fingerprint`: deterministic fingerprint of a single key’s value
+- `envsitter_match`: boolean/shape checks and outside-in candidate matching (without printing values)
+- `envsitter_match_by_key`: bulk candidate-by-key matching (returns booleans only)
+- `envsitter_scan`: scan value *shapes* (jwt/url/base64) without printing values
+
+### Blocking behavior
+
+- Sensitive paths: `.env`, `.env.local`, `.env.production`, etc. (`.env*`)
+- Allowed: `.env.example`
+- Always blocked: `.envsitter/pepper`
+
+Blocked operations via tool hooks:
+
+- `read` on sensitive `.env*` paths
+- `edit` / `write` / `patch` / `multiedit` on sensitive `.env*` paths
+
+When blocked, the plugin shows a throttled warning toast and suggests using EnvSitter tools instead.
+
+## Tools
+
+All tools accept a `filePath` that defaults to `.env`. Tools only operate on `.env`-style files inside the current project.
+
+### `envsitter_keys`
+
+Lists keys in a dotenv file.
+
+- Input: `{ "filePath"?: string, "filterRegex"?: string }`
+- Output: JSON `{ file, keys }`
+
+Example (inside OpenCode):
+
+```json
+{ "tool": "envsitter_keys", "args": { "filePath": ".env" } }
+```
+
+Optional filtering:
+
+```json
+{ "tool": "envsitter_keys", "args": { "filePath": ".env", "filterRegex": "/^(API_|DB_)/" } }
+```
+
+### `envsitter_fingerprint`
+
+Computes a deterministic fingerprint of a single key.
+
+- Input: `{ "filePath"?: string, "key": string }`
+- Output: JSON `{ file, key, result }`
+
+Example (inside OpenCode):
+
+```json
+{ "tool": "envsitter_fingerprint", "args": { "filePath": ".env", "key": "DATABASE_URL" } }
+```
+
+### `envsitter_match`
+
+Matches key values without printing them.
+
+- Input:
+  - `{ "filePath"?: string, "op"?: string, "key"?: string, "keys"?: string[], "allKeys"?: boolean, "candidate"?: string, "candidateEnvVar"?: string }`
+- Output:
+  - If `key` provided: JSON `{ file, key, op, match }`
+  - If `keys` or `allKeys`: JSON `{ file, op, matches }`
+
+Notes:
+
+- Provide exactly one selector: `key`, `keys`, or `allKeys: true`.
+- For ops that compare against a candidate (`is_equal`, `partial_match_*`), provide `candidate` or `candidateEnvVar`.
+
+Examples (inside OpenCode):
+
+```json
+{ "tool": "envsitter_match", "args": { "filePath": ".env", "key": "SENTRY_DSN", "op": "exists" } }
+```
+
+```json
+{ "tool": "envsitter_match", "args": { "filePath": ".env", "key": "PORT", "op": "is_number" } }
+```
+
+```json
+{ "tool": "envsitter_match", "args": { "filePath": ".env", "key": "NODE_ENV", "op": "is_equal", "candidate": "production" } }
+```
+
+### `envsitter_match_by_key`
+
+Bulk match candidates-by-key without printing values (returns booleans only).
+
+- Input:
+  - `{ "filePath"?: string, "candidatesByKey"?: Record<string,string>, "candidatesByKeyJson"?: string, "candidatesByKeyEnvVar"?: string }`
+- Output: JSON `{ file, matches }`
+
+Note: provide exactly one of `candidatesByKey`, `candidatesByKeyJson`, or `candidatesByKeyEnvVar`.
+
+Example (inside OpenCode):
+
+```json
+{ "tool": "envsitter_match_by_key", "args": { "filePath": ".env", "candidatesByKey": { "NODE_ENV": "production" } } }
+```
+
+### `envsitter_scan`
+
+Scan value shapes (jwt/url/base64) without printing values.
+
+- Input: `{ "filePath"?: string, "detect"?: ("jwt"|"url"|"base64")[], "keysFilterRegex"?: string }`
+- Output: JSON `{ file, findings }`
+
+Example (inside OpenCode):
+
+```json
+{ "tool": "envsitter_scan", "args": { "filePath": ".env", "detect": ["jwt", "url"] } }
+```
+
+## Install & enable in OpenCode (alternatives)
 
 ### Option B: local plugin file (project-level)
 
@@ -106,21 +188,6 @@ Place a plugin file in `~/.config/opencode/plugin/` if you want it enabled for a
 
 (You can use the same contents as Option B.)
 
-## Behavior details
-
-### What paths are considered sensitive?
-
-- Sensitive: `.env`, `.env.local`, `.env.production`, etc. (`.env*`)
-- Allowed: `.env.example`
-- Always blocked: `.envsitter/pepper`
-
-### What operations are blocked?
-
-- `read` on sensitive `.env*` paths
-- `edit` / `write` / `patch` on sensitive `.env*` paths
-
-When blocked, the plugin shows a throttled warning toast and suggests using EnvSitter instead.
-
 ## Development
 
 ### Install
@@ -135,7 +202,22 @@ npm ci
 npm run typecheck
 ```
 
-There are currently no lint scripts in this repo. Run tests with `npm test`.
+### Test
+
+```bash
+npm test
+```
+
+### Build (for publishing)
+
+```bash
+npm run build
+```
+
+## Notes
+
+- This project intentionally avoids reading or printing `.env` values.
+- EnvSitter CLI exists as an additional safe inspection option, for example: `npx envsitter keys --file .env`.
 
 ## License
 
