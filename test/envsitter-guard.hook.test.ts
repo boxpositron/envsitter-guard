@@ -19,12 +19,11 @@ function createClientSpy(): {
     client: {
         tui: {
             showToast: (input: { body: { title: string; variant: string; message: string } }) => Promise<void>;
-            appendPrompt: (input: { body: { text: string } }) => Promise<void>;
         };
     };
-    calls: { showToast: number; appendPrompt: number };
+    calls: { showToast: number };
 } {
-    const calls = { showToast: 0, appendPrompt: 0 };
+    const calls = { showToast: 0 };
 
     return {
         calls,
@@ -32,9 +31,6 @@ function createClientSpy(): {
             tui: {
                 async showToast() {
                     calls.showToast += 1;
-                },
-                async appendPrompt() {
-                    calls.appendPrompt += 1;
                 },
             },
         },
@@ -117,5 +113,4 @@ test("toasts are throttled", async () => {
     await assert.rejects(() => hook({ tool: "read", sessionID: "s", callID: "c" }, { args: { filePath: ".env" } }));
 
     assert.equal(calls.showToast, 1);
-    assert.equal(calls.appendPrompt, 1);
 });

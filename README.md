@@ -49,6 +49,15 @@ These tools never return raw `.env` values:
 - `envsitter_match`: boolean/shape checks and outside-in candidate matching (without printing values)
 - `envsitter_match_by_key`: bulk candidate-by-key matching (returns booleans only)
 - `envsitter_scan`: scan value *shapes* (jwt/url/base64) without printing values
+- `envsitter_validate`: validate dotenv syntax (no values; issues only)
+- `envsitter_copy`: copy keys between env files (no values; plan + line numbers only)
+- `envsitter_format` / `envsitter_reorder`: reorder/format env files (no values)
+- `envsitter_annotate`: add comments near keys (no values)
+
+Notes for file operations:
+
+- File operations are dry-run unless `write: true` is provided.
+- Tools only return keys, booleans, and line numbers/operation plans.
 
 ### Blocking behavior
 
@@ -65,7 +74,10 @@ When blocked, the plugin shows a throttled warning toast and suggests using EnvS
 
 ## Tools
 
-All tools accept a `filePath` that defaults to `.env`. Tools only operate on `.env`-style files inside the current project.
+Tools only operate on `.env`-style files inside the current project.
+
+- Most tools accept a `filePath` that defaults to `.env`.
+- File operations are dry-run unless `write: true` is provided.
 
 ### `envsitter_keys`
 
@@ -155,6 +167,63 @@ Example (inside OpenCode):
 
 ```json
 { "tool": "envsitter_scan", "args": { "filePath": ".env", "detect": ["jwt", "url"] } }
+```
+
+### `envsitter_validate`
+
+Validate dotenv syntax.
+
+- Input: `{ "filePath"?: string }`
+- Output: JSON `{ file, ok, issues }`
+
+Example (inside OpenCode):
+
+```json
+{ "tool": "envsitter_validate", "args": { "filePath": ".env" } }
+```
+
+### `envsitter_copy`
+
+Copy keys between env files. Output includes a plan (keys + line numbers), never values.
+
+- Input:
+  - `{ "from": string, "to": string, "keys"?: string[], "includeRegex"?: string, "excludeRegex"?: string, "rename"?: string, "onConflict"?: "error"|"skip"|"overwrite", "write"?: boolean }`
+- Output: JSON `{ from, to, onConflict, willWrite, wrote, hasChanges, issues, plan }`
+
+Examples (inside OpenCode):
+
+```json
+{ "tool": "envsitter_copy", "args": { "from": ".env.production", "to": ".env.staging", "keys": ["API_URL"], "onConflict": "overwrite" } }
+```
+
+```json
+{ "tool": "envsitter_copy", "args": { "from": ".env.production", "to": ".env.staging", "keys": ["API_URL"], "onConflict": "overwrite", "write": true } }
+```
+
+### `envsitter_format` / `envsitter_reorder`
+
+Format/reorder an env file (no values in output).
+
+- Input: `{ "filePath"?: string, "mode"?: "sections"|"global", "sort"?: "alpha"|"none", "write"?: boolean }`
+- Output: JSON `{ file, mode, sort, willWrite, wrote, hasChanges, issues }`
+
+Example (inside OpenCode):
+
+```json
+{ "tool": "envsitter_format", "args": { "filePath": ".env", "mode": "sections", "sort": "alpha", "write": true } }
+```
+
+### `envsitter_annotate`
+
+Annotate an env key with a comment (no values in output).
+
+- Input: `{ "filePath"?: string, "key": string, "comment": string, "line"?: number, "write"?: boolean }`
+- Output: JSON `{ file, key, willWrite, wrote, hasChanges, issues, plan }`
+
+Example (inside OpenCode):
+
+```json
+{ "tool": "envsitter_annotate", "args": { "filePath": ".env", "key": "DATABASE_URL", "comment": "prod only", "write": true } }
 ```
 
 ## Install & enable in OpenCode (alternatives)

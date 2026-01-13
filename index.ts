@@ -1,6 +1,6 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin/tool";
-import { EnvSitter } from "envsitter";
+import { EnvSitter, annotateEnvFile, copyEnvFileKeys, formatEnvFile, validateEnvFile } from "envsitter";
 import path from "node:path";
 
 function normalizePath(input: string): string {
@@ -134,21 +134,11 @@ export const EnvSitterGuard: Plugin = async ({ client, directory, worktree }) =>
 
         await client.tui.showToast({
             body: {
-                title: "Blocked sensitive file access",
+                title: "Blocked sensitive .env access",
                 variant: "warning",
                 message:
-                    `${action} of sensitive env files is blocked. Use EnvSitter instead (never prints values):\n` +
-                    "- envsitter_keys { filePath: '.env' }\n" +
-                    "- envsitter_fingerprint { filePath: '.env', key: 'SOME_KEY' }\n" +
-                    "- envsitter_match { filePath: '.env', key: 'SOME_KEY', op: 'exists' }\n" +
-                    "- envsitter_scan { filePath: '.env', detect: ['jwt','url'] }\n" +
-                    "(CLI: `npx envsitter keys --file .env`) ",
-            },
-        });
-
-        await client.tui.appendPrompt({
-            body: {
-                text: "\nTip: use EnvSitter for `.env*` inspection (keys/fingerprints) instead of reading the file.\n",
+                    `${action} of \`.env*\` is blocked to prevent secret leaks. ` +
+                    "Use EnvSitter tools instead (never prints values): envsitter_keys, envsitter_fingerprint, envsitter_match, envsitter_scan, envsitter_validate, envsitter_format, envsitter_annotate, envsitter_copy.",
             },
         });
     }
@@ -221,6 +211,8 @@ export const EnvSitterGuard: Plugin = async ({ client, directory, worktree }) =>
                     const op = args.op ?? "is_equal";
                     const es = EnvSitter.fromDotenvFile(resolved.absolutePath);
 
+                    let isEqualCandidate: string | undefined;
+
                     const matcher = (() => {
                         if (op === "exists") return { op } as const;
                         if (op === "is_empty") return { op } as const;
@@ -234,6 +226,7 @@ export const EnvSitterGuard: Plugin = async ({ client, directory, worktree }) =>
                         });
 
                         if (op === "is_equal") {
+                            isEqualCandidate = candidate;
                             return { op, candidate } as const;
                         }
 
@@ -263,16 +256,25 @@ export const EnvSitterGuard: Plugin = async ({ client, directory, worktree }) =>
                     }
 
                     if (typeof key === "string") {
-                        const match = await es.matchKey(key, matcher);
+                        const match =
+                            matcher.op === "is_equal" && typeof isEqualCandidate === "string"
+                                ? await es.matchCandidate(key, isEqualCandidate)
+                                : await es.matchKey(key, matcher);
                         return JSON.stringify({ file: resolved.displayPath, key, op: matcher.op, match }, null, 2);
                     }
 
                     if (Array.isArray(keys) && keys.length > 0) {
-                        const matches = await es.matchKeyBulk(keys, matcher);
+                        const matches =
+                            matcher.op === "is_equal" && typeof isEqualCandidate === "string"
+                                ? await es.matchCandidateBulk(keys, isEqualCandidate)
+                                : await es.matchKeyBulk(keys, matcher);
                         return JSON.stringify({ file: resolved.displayPath, op: matcher.op, matches }, null, 2);
                     }
 
-                    const matches = await es.matchKeyAll(matcher);
+                    const matches =
+                        matcher.op === "is_equal" && typeof isEqualCandidate === "string"
+                            ? await es.matchCandidateAll(isEqualCandidate)
+                            : await es.matchKeyAll(matcher);
                     return JSON.stringify({ file: resolved.displayPath, op: matcher.op, matches }, null, 2);
                 },
             }),
@@ -366,6 +368,196 @@ export const EnvSitterGuard: Plugin = async ({ client, directory, worktree }) =>
                     });
 
                     return JSON.stringify({ file: resolved.displayPath, findings }, null, 2);
+                },
+            }),
+            envsitter_validate: tool({
+                description: "Validate dotenv syntax (never returns values).",
+                args: {
+                    filePath: tool.schema.string().optional(),
+                },
+                async execute(args) {
+                    const resolved = resolveDotEnvPath({
+                        worktree,
+                        directory,
+                        filePath: args.filePath ?? ".env",
+                    });
+
+                    const result = await validateEnvFile(resolved.absolutePath);
+                    return JSON.stringify({ file: resolved.displayPath, ok: result.ok, issues: result.issues }, null, 2);
+                },
+            }),
+            envsitter_copy: tool({
+                description:
+                    "Copy keys between dotenv files safely (no values in output). Dry-run unless `write: true`.",
+                args: {
+                    from: tool.schema.string(),
+                    to: tool.schema.string(),
+                    keys: tool.schema.array(tool.schema.string()).optional(),
+                    includeRegex: tool.schema.string().optional(),
+                    excludeRegex: tool.schema.string().optional(),
+                    rename: tool.schema.string().optional(),
+                    onConflict: tool.schema.enum(["error", "skip", "overwrite"] as const).optional(),
+                    write: tool.schema.boolean().optional(),
+                },
+                async execute(args) {
+                    const resolvedFrom = resolveDotEnvPath({
+                        worktree,
+                        directory,
+                        filePath: args.from,
+                    });
+
+                    const resolvedTo = resolveDotEnvPath({
+                        worktree,
+                        directory,
+                        filePath: args.to,
+                    });
+
+                    if (typeof args.rename === "string" && args.rename.trim().length === 0) {
+                        throw new Error("Invalid `rename`; expected a non-empty string like `A=B,C=D`. ");
+                    }
+
+                    const result = await copyEnvFileKeys({
+                        from: resolvedFrom.absolutePath,
+                        to: resolvedTo.absolutePath,
+                        keys: Array.isArray(args.keys) && args.keys.length > 0 ? args.keys : undefined,
+                        include: args.includeRegex ? parseUserRegExp(args.includeRegex) : undefined,
+                        exclude: args.excludeRegex ? parseUserRegExp(args.excludeRegex) : undefined,
+                        rename: args.rename,
+                        onConflict: args.onConflict,
+                        write: args.write === true,
+                    });
+
+                    return JSON.stringify(
+                        {
+                            from: resolvedFrom.displayPath,
+                            to: resolvedTo.displayPath,
+                            onConflict: result.onConflict,
+                            willWrite: result.willWrite,
+                            wrote: result.wrote,
+                            hasChanges: result.hasChanges,
+                            issues: result.issues,
+                            plan: result.plan,
+                        },
+                        null,
+                        2,
+                    );
+                },
+            }),
+            envsitter_format: tool({
+                description: "Format/reorder a dotenv file (no values in output). Dry-run unless `write: true`.",
+                args: {
+                    filePath: tool.schema.string().optional(),
+                    mode: tool.schema.enum(["sections", "global"] as const).optional(),
+                    sort: tool.schema.enum(["alpha", "none"] as const).optional(),
+                    write: tool.schema.boolean().optional(),
+                },
+                async execute(args) {
+                    const resolved = resolveDotEnvPath({
+                        worktree,
+                        directory,
+                        filePath: args.filePath ?? ".env",
+                    });
+
+                    const result = await formatEnvFile({
+                        file: resolved.absolutePath,
+                        mode: args.mode,
+                        sort: args.sort,
+                        write: args.write === true,
+                    });
+
+                    return JSON.stringify(
+                        {
+                            file: resolved.displayPath,
+                            mode: result.mode,
+                            sort: result.sort,
+                            willWrite: result.willWrite,
+                            wrote: result.wrote,
+                            hasChanges: result.hasChanges,
+                            issues: result.issues,
+                        },
+                        null,
+                        2,
+                    );
+                },
+            }),
+            envsitter_reorder: tool({
+                description: "Alias for envsitter_format.",
+                args: {
+                    filePath: tool.schema.string().optional(),
+                    mode: tool.schema.enum(["sections", "global"] as const).optional(),
+                    sort: tool.schema.enum(["alpha", "none"] as const).optional(),
+                    write: tool.schema.boolean().optional(),
+                },
+                async execute(args) {
+                    const resolved = resolveDotEnvPath({
+                        worktree,
+                        directory,
+                        filePath: args.filePath ?? ".env",
+                    });
+
+                    const result = await formatEnvFile({
+                        file: resolved.absolutePath,
+                        mode: args.mode,
+                        sort: args.sort,
+                        write: args.write === true,
+                    });
+
+                    return JSON.stringify(
+                        {
+                            file: resolved.displayPath,
+                            mode: result.mode,
+                            sort: result.sort,
+                            willWrite: result.willWrite,
+                            wrote: result.wrote,
+                            hasChanges: result.hasChanges,
+                            issues: result.issues,
+                        },
+                        null,
+                        2,
+                    );
+                },
+            }),
+            envsitter_annotate: tool({
+                description: "Annotate a dotenv key with a comment (no values in output). Dry-run unless `write: true`.",
+                args: {
+                    filePath: tool.schema.string().optional(),
+                    key: tool.schema.string(),
+                    comment: tool.schema.string(),
+                    line: tool.schema.number().int().optional(),
+                    write: tool.schema.boolean().optional(),
+                },
+                async execute(args) {
+                    const resolved = resolveDotEnvPath({
+                        worktree,
+                        directory,
+                        filePath: args.filePath ?? ".env",
+                    });
+
+                    if (args.comment.trim().length === 0) {
+                        throw new Error("Comment must be a non-empty string.");
+                    }
+
+                    const result = await annotateEnvFile({
+                        file: resolved.absolutePath,
+                        key: args.key,
+                        comment: args.comment,
+                        line: args.line,
+                        write: args.write === true,
+                    });
+
+                    return JSON.stringify(
+                        {
+                            file: resolved.displayPath,
+                            key: result.key,
+                            willWrite: result.willWrite,
+                            wrote: result.wrote,
+                            hasChanges: result.hasChanges,
+                            issues: result.issues,
+                            plan: result.plan,
+                        },
+                        null,
+                        2,
+                    );
                 },
             }),
         },

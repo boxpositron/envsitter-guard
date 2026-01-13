@@ -50,6 +50,40 @@ type ToolApi = {
     envsitter_scan: {
         execute: (args: { filePath?: string; detect?: ScanDetection[]; keysFilterRegex?: string }) => Promise<string>;
     };
+    envsitter_validate: {
+        execute: (args: { filePath?: string }) => Promise<string>;
+    };
+    envsitter_copy: {
+        execute: (args: {
+            from: string;
+            to: string;
+            keys?: string[];
+            includeRegex?: string;
+            excludeRegex?: string;
+            rename?: string;
+            onConflict?: "error" | "skip" | "overwrite";
+            write?: boolean;
+        }) => Promise<string>;
+    };
+    envsitter_format: {
+        execute: (args: {
+            filePath?: string;
+            mode?: "sections" | "global";
+            sort?: "alpha" | "none";
+            write?: boolean;
+        }) => Promise<string>;
+    };
+    envsitter_reorder: {
+        execute: (args: {
+            filePath?: string;
+            mode?: "sections" | "global";
+            sort?: "alpha" | "none";
+            write?: boolean;
+        }) => Promise<string>;
+    };
+    envsitter_annotate: {
+        execute: (args: { filePath?: string; key: string; comment: string; line?: number; write?: boolean }) => Promise<string>;
+    };
 };
 
 async function createTmpDir(): Promise<string> {
@@ -279,4 +313,82 @@ test("tool execution blocks .envsitter/pepper", async () => {
         () => tools.envsitter_keys.execute({ filePath: ".envsitter/pepper" }),
         (err: unknown) => err instanceof Error && err.message.includes("blocked"),
     );
+});
+
+test("envsitter_validate returns issues without leaking values", async () => {
+    const worktree = await createTmpDir();
+    await fs.writeFile(path.join(worktree, ".env"), "GOOD=supersecret\nBAD\n");
+
+    const tools = await getTools({ directory: worktree, worktree });
+    const out = await tools.envsitter_validate.execute({ filePath: ".env" });
+
+    assert.ok(!out.includes("supersecret"));
+
+    const parsed = JSON.parse(out) as { file: string; ok: boolean; issues: Array<{ line: number; column: number; message: string }> };
+    assert.equal(parsed.file, ".env");
+    assert.equal(parsed.ok, false);
+    assert.ok(parsed.issues.length > 0);
+});
+
+test("envsitter_copy dry-runs unless write=true", async () => {
+    const worktree = await createTmpDir();
+    await fs.writeFile(path.join(worktree, ".env.production"), "FOO=bar\nBAZ=qux\n");
+    await fs.writeFile(path.join(worktree, ".env.staging"), "FOO=old\n");
+
+    const tools = await getTools({ directory: worktree, worktree });
+
+    const outDryRun = await tools.envsitter_copy.execute({
+        from: ".env.production",
+        to: ".env.staging",
+        keys: ["BAZ"],
+        onConflict: "overwrite",
+    });
+
+    assert.ok(!outDryRun.includes("bar"));
+    assert.ok(!outDryRun.includes("qux"));
+
+    const stagingAfterDryRun = await fs.readFile(path.join(worktree, ".env.staging"), "utf8");
+    assert.ok(!stagingAfterDryRun.includes("BAZ=qux"));
+
+    const outWrite = await tools.envsitter_copy.execute({
+        from: ".env.production",
+        to: ".env.staging",
+        keys: ["BAZ"],
+        onConflict: "overwrite",
+        write: true,
+    });
+
+    assert.ok(!outWrite.includes("bar"));
+    assert.ok(!outWrite.includes("qux"));
+
+    const stagingAfterWrite = await fs.readFile(path.join(worktree, ".env.staging"), "utf8");
+    assert.ok(stagingAfterWrite.includes("BAZ=qux"));
+});
+
+test("envsitter_format sorts keys without leaking values", async () => {
+    const worktree = await createTmpDir();
+    await fs.writeFile(path.join(worktree, ".env"), "B=2\nA=1\n");
+
+    const tools = await getTools({ directory: worktree, worktree });
+    const out = await tools.envsitter_format.execute({ filePath: ".env", mode: "global", sort: "alpha", write: true });
+
+    assert.ok(!out.includes("=1"));
+    assert.ok(!out.includes("=2"));
+
+    const content = await fs.readFile(path.join(worktree, ".env"), "utf8");
+    assert.ok(content.indexOf("A=1") < content.indexOf("B=2"));
+});
+
+test("envsitter_annotate adds comments without leaking values", async () => {
+    const worktree = await createTmpDir();
+    await fs.writeFile(path.join(worktree, ".env"), "FOO=bar\n");
+
+    const tools = await getTools({ directory: worktree, worktree });
+    const out = await tools.envsitter_annotate.execute({ filePath: ".env", key: "FOO", comment: "prod only", write: true });
+
+    assert.ok(!out.includes("bar"));
+
+    const content = await fs.readFile(path.join(worktree, ".env"), "utf8");
+    assert.ok(content.includes("prod only"));
+    assert.ok(content.includes("FOO=bar"));
 });
