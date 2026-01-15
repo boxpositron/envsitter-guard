@@ -36,6 +36,8 @@ Accidentally printing `.env` contents is one of the easiest ways for an agentic 
 
 `envsitter-guard` blocks risky operations and points you to safe alternatives.
 
+This plugin is built on top of [envsitter](https://github.com/boxpositron/envsitter), a library for safely inspecting and matching `.env` secrets without ever printing values.
+
 ## What it does
 
 This plugin provides safe EnvSitter-backed tools and blocks sensitive file access via OpenCode tool hooks.
@@ -44,15 +46,29 @@ This plugin provides safe EnvSitter-backed tools and blocks sensitive file acces
 
 These tools never return raw `.env` values:
 
+**Reading:**
 - `envsitter_keys`: list keys in a dotenv file
-- `envsitter_fingerprint`: deterministic fingerprint of a single key’s value
+- `envsitter_fingerprint`: deterministic fingerprint of a single key's value
+- `envsitter_scan`: scan value *shapes* (jwt/url/base64) without printing values
+
+**Matching:**
 - `envsitter_match`: boolean/shape checks and outside-in candidate matching (without printing values)
 - `envsitter_match_by_key`: bulk candidate-by-key matching (returns booleans only)
-- `envsitter_scan`: scan value *shapes* (jwt/url/base64) without printing values
+
+**Mutations:**
+- `envsitter_add`: add a new key (fails if key exists)
+- `envsitter_set`: set a key's value (creates or updates)
+- `envsitter_unset`: unset a key's value (sets to empty, keeps the key)
+- `envsitter_delete`: delete key(s) entirely from the file
+
+**File Operations:**
 - `envsitter_validate`: validate dotenv syntax (no values; issues only)
 - `envsitter_copy`: copy keys between env files (no values; plan + line numbers only)
 - `envsitter_format` / `envsitter_reorder`: reorder/format env files (no values)
 - `envsitter_annotate`: add comments near keys (no values)
+
+**Help:**
+- `envsitter_help`: comprehensive usage guide for all tools (topics: `overview`, `reading`, `matching`, `mutations`, `file_ops`, `all`)
 
 Notes for file operations:
 
@@ -70,7 +86,7 @@ Blocked operations via tool hooks:
 - `read` on sensitive `.env*` paths
 - `edit` / `write` / `patch` / `multiedit` on sensitive `.env*` paths
 
-When blocked, the plugin shows a throttled warning toast and suggests using EnvSitter tools instead.
+When blocked, the plugin throws an error with guidance on which EnvSitter tools to use instead.
 
 ## Tools
 
@@ -226,6 +242,79 @@ Example (inside OpenCode):
 { "tool": "envsitter_annotate", "args": { "filePath": ".env", "key": "DATABASE_URL", "comment": "prod only", "write": true } }
 ```
 
+### `envsitter_add`
+
+Add a new key to a dotenv file (fails if key already exists).
+
+- Input: `{ "filePath"?: string, "key": string, "value": string, "write"?: boolean }`
+- Output: JSON `{ file, key, willWrite, wrote, hasChanges, issues, plan }`
+
+Example (inside OpenCode):
+
+```json
+{ "tool": "envsitter_add", "args": { "filePath": ".env", "key": "NEW_API_KEY", "value": "sk-xxx", "write": true } }
+```
+
+### `envsitter_set`
+
+Set a key's value in a dotenv file (creates if missing, updates if exists).
+
+- Input: `{ "filePath"?: string, "key": string, "value": string, "write"?: boolean }`
+- Output: JSON `{ file, key, willWrite, wrote, hasChanges, issues, plan }`
+
+Example (inside OpenCode):
+
+```json
+{ "tool": "envsitter_set", "args": { "filePath": ".env", "key": "API_KEY", "value": "new-value", "write": true } }
+```
+
+### `envsitter_unset`
+
+Unset a key's value (sets to empty string, keeps the key line).
+
+- Input: `{ "filePath"?: string, "key": string, "write"?: boolean }`
+- Output: JSON `{ file, key, willWrite, wrote, hasChanges, issues, plan }`
+
+Example (inside OpenCode):
+
+```json
+{ "tool": "envsitter_unset", "args": { "filePath": ".env", "key": "OLD_KEY", "write": true } }
+```
+
+### `envsitter_delete`
+
+Delete key(s) from a dotenv file entirely (removes the line).
+
+- Input: `{ "filePath"?: string, "keys": string[], "write"?: boolean }`
+- Output: JSON `{ file, keys, willWrite, wrote, hasChanges, issues, plan }`
+
+Example (inside OpenCode):
+
+```json
+{ "tool": "envsitter_delete", "args": { "filePath": ".env", "keys": ["OLD_KEY", "UNUSED_KEY"], "write": true } }
+```
+
+### `envsitter_help`
+
+Get comprehensive help on all EnvSitter tools.
+
+- Input: `{ "topic"?: "overview" | "reading" | "matching" | "mutations" | "file_ops" | "all" }`
+- Output: Markdown documentation for the requested topic
+
+Topics:
+- `overview`: What EnvSitter is and tool categories
+- `reading`: `envsitter_keys`, `envsitter_fingerprint`, `envsitter_scan`
+- `matching`: `envsitter_match`, `envsitter_match_by_key` with all operators
+- `mutations`: `envsitter_add`, `envsitter_set`, `envsitter_unset`, `envsitter_delete`
+- `file_ops`: `envsitter_validate`, `envsitter_copy`, `envsitter_format`, `envsitter_annotate`
+- `all`: Full guide (default)
+
+Example (inside OpenCode):
+
+```json
+{ "tool": "envsitter_help", "args": { "topic": "mutations" } }
+```
+
 ## Install & enable in OpenCode (alternatives)
 
 ### Option B: local plugin file (project-level)
@@ -283,10 +372,15 @@ npm test
 npm run build
 ```
 
+## Related
+
+- [envsitter](https://github.com/boxpositron/envsitter) — The underlying library this plugin is built on. Provides CLI and programmatic API for safe `.env` inspection.
+- EnvSitter CLI: `npx envsitter keys --file .env` (alternative to plugin tools)
+
 ## Notes
 
 - This project intentionally avoids reading or printing `.env` values.
-- EnvSitter CLI exists as an additional safe inspection option, for example: `npx envsitter keys --file .env`.
+- All tools return keys, booleans, line numbers, and operation plans — never secret values.
 
 ## License
 

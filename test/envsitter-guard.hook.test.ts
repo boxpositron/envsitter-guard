@@ -105,12 +105,12 @@ test("strips @ prefix in filePath", async () => {
     );
 });
 
-test("toasts are throttled", async () => {
+test("blocking is silent (no toasts)", async () => {
     const worktree = await createTmpDir();
     const { hook, calls } = await getBeforeHook({ directory: worktree, worktree });
 
     await assert.rejects(() => hook({ tool: "read", sessionID: "s", callID: "c" }, { args: { filePath: ".env" } }));
     await assert.rejects(() => hook({ tool: "read", sessionID: "s", callID: "c" }, { args: { filePath: ".env" } }));
 
-    assert.equal(calls.showToast, 1);
+    assert.equal(calls.showToast, 0, "should not show toasts, only throw errors");
 });

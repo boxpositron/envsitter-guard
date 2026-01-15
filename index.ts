@@ -1,6 +1,16 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin/tool";
-import { EnvSitter, annotateEnvFile, copyEnvFileKeys, formatEnvFile, validateEnvFile } from "envsitter";
+import {
+    EnvSitter,
+    addEnvFileKey,
+    annotateEnvFile,
+    copyEnvFileKeys,
+    deleteEnvFileKeys,
+    formatEnvFile,
+    setEnvFileKey,
+    unsetEnvFileKey,
+    validateEnvFile,
+} from "envsitter";
 import path from "node:path";
 
 function normalizePath(input: string): string {
@@ -110,9 +120,7 @@ function resolveDotEnvPath(params: {
     return { absolutePath, displayPath: relativeToWorktree };
 }
 
-export const EnvSitterGuard: Plugin = async ({ client, directory, worktree }) => {
-    let lastToastAt = 0;
-
+export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
     const matchOps = [
         "exists",
         "is_empty",
@@ -126,22 +134,6 @@ export const EnvSitterGuard: Plugin = async ({ client, directory, worktree }) =>
     ] as const;
 
     const scanDetections = ["jwt", "url", "base64"] as const;
-
-    async function notifyBlocked(action: string): Promise<void> {
-        const now = Date.now();
-        if (now - lastToastAt < 5000) return;
-        lastToastAt = now;
-
-        await client.tui.showToast({
-            body: {
-                title: "Blocked sensitive .env access",
-                variant: "warning",
-                message:
-                    `${action} of \`.env*\` is blocked to prevent secret leaks. ` +
-                    "Use EnvSitter tools instead (never prints values): envsitter_keys, envsitter_fingerprint, envsitter_match, envsitter_scan, envsitter_validate, envsitter_format, envsitter_annotate, envsitter_copy.",
-            },
-        });
-    }
 
     return {
         tool: {
@@ -560,6 +552,341 @@ export const EnvSitterGuard: Plugin = async ({ client, directory, worktree }) =>
                     );
                 },
             }),
+            envsitter_add: tool({
+                description:
+                    "Add a new key to a dotenv file (fails if key already exists). Dry-run unless `write: true`.",
+                args: {
+                    filePath: tool.schema.string().optional(),
+                    key: tool.schema.string(),
+                    value: tool.schema.string(),
+                    write: tool.schema.boolean().optional(),
+                },
+                async execute(args) {
+                    const resolved = resolveDotEnvPath({
+                        worktree,
+                        directory,
+                        filePath: args.filePath ?? ".env",
+                    });
+
+                    const result = await addEnvFileKey({
+                        file: resolved.absolutePath,
+                        key: args.key,
+                        value: args.value,
+                        write: args.write === true,
+                    });
+
+                    return JSON.stringify(
+                        {
+                            file: resolved.displayPath,
+                            key: result.key,
+                            willWrite: result.willWrite,
+                            wrote: result.wrote,
+                            hasChanges: result.hasChanges,
+                            issues: result.issues,
+                            plan: result.plan,
+                        },
+                        null,
+                        2,
+                    );
+                },
+            }),
+            envsitter_set: tool({
+                description:
+                    "Set a key's value in a dotenv file (creates if missing, updates if exists). Dry-run unless `write: true`.",
+                args: {
+                    filePath: tool.schema.string().optional(),
+                    key: tool.schema.string(),
+                    value: tool.schema.string(),
+                    write: tool.schema.boolean().optional(),
+                },
+                async execute(args) {
+                    const resolved = resolveDotEnvPath({
+                        worktree,
+                        directory,
+                        filePath: args.filePath ?? ".env",
+                    });
+
+                    const result = await setEnvFileKey({
+                        file: resolved.absolutePath,
+                        key: args.key,
+                        value: args.value,
+                        write: args.write === true,
+                    });
+
+                    return JSON.stringify(
+                        {
+                            file: resolved.displayPath,
+                            key: result.key,
+                            willWrite: result.willWrite,
+                            wrote: result.wrote,
+                            hasChanges: result.hasChanges,
+                            issues: result.issues,
+                            plan: result.plan,
+                        },
+                        null,
+                        2,
+                    );
+                },
+            }),
+            envsitter_unset: tool({
+                description:
+                    "Unset a key's value in a dotenv file (sets to empty string, keeps the key). Dry-run unless `write: true`.",
+                args: {
+                    filePath: tool.schema.string().optional(),
+                    key: tool.schema.string(),
+                    write: tool.schema.boolean().optional(),
+                },
+                async execute(args) {
+                    const resolved = resolveDotEnvPath({
+                        worktree,
+                        directory,
+                        filePath: args.filePath ?? ".env",
+                    });
+
+                    const result = await unsetEnvFileKey({
+                        file: resolved.absolutePath,
+                        key: args.key,
+                        write: args.write === true,
+                    });
+
+                    return JSON.stringify(
+                        {
+                            file: resolved.displayPath,
+                            key: result.key,
+                            willWrite: result.willWrite,
+                            wrote: result.wrote,
+                            hasChanges: result.hasChanges,
+                            issues: result.issues,
+                            plan: result.plan,
+                        },
+                        null,
+                        2,
+                    );
+                },
+            }),
+            envsitter_delete: tool({
+                description:
+                    "Delete key(s) from a dotenv file entirely (removes the line). Dry-run unless `write: true`.",
+                args: {
+                    filePath: tool.schema.string().optional(),
+                    keys: tool.schema.array(tool.schema.string()),
+                    write: tool.schema.boolean().optional(),
+                },
+                async execute(args) {
+                    const resolved = resolveDotEnvPath({
+                        worktree,
+                        directory,
+                        filePath: args.filePath ?? ".env",
+                    });
+
+                    const result = await deleteEnvFileKeys({
+                        file: resolved.absolutePath,
+                        keys: args.keys,
+                        write: args.write === true,
+                    });
+
+                    return JSON.stringify(
+                        {
+                            file: resolved.displayPath,
+                            keys: result.keys,
+                            willWrite: result.willWrite,
+                            wrote: result.wrote,
+                            hasChanges: result.hasChanges,
+                            issues: result.issues,
+                            plan: result.plan,
+                        },
+                        null,
+                        2,
+                    );
+                },
+            }),
+            envsitter_help: tool({
+                description:
+                    "Get comprehensive help on all EnvSitter tools. Call this to understand how to safely work with .env files without exposing secrets.",
+                args: {
+                    topic: tool.schema
+                        .enum([
+                            "overview",
+                            "reading",
+                            "matching",
+                            "mutations",
+                            "file_ops",
+                            "all",
+                        ] as const)
+                        .optional(),
+                },
+                async execute(args) {
+                    const topic = args.topic ?? "all";
+
+                    const overview = `
+## EnvSitter Tools Overview
+
+EnvSitter provides safe .env file operations that NEVER expose secret values.
+All tools return keys, booleans, line numbers, and operation plans only.
+
+### Why Use EnvSitter?
+- Direct reading of .env files is BLOCKED to prevent secret leaks
+- These tools let you inspect, validate, and modify .env files safely
+- File modifications are dry-run by default; use \`write: true\` to apply
+
+### Tool Categories
+- **Reading**: envsitter_keys, envsitter_fingerprint, envsitter_scan
+- **Matching**: envsitter_match, envsitter_match_by_key
+- **Mutations**: envsitter_add, envsitter_set, envsitter_unset, envsitter_delete
+- **File Ops**: envsitter_validate, envsitter_copy, envsitter_format, envsitter_annotate
+`;
+
+                    const reading = `
+## Reading Tools (never return values)
+
+### envsitter_keys
+List all keys in a .env file.
+\`\`\`json
+{ "filePath": ".env", "filterRegex": "/^API_/" }
+\`\`\`
+Returns: \`{ file, keys: string[] }\`
+
+### envsitter_fingerprint
+Get a deterministic fingerprint of a key's value (for comparison/auditing).
+\`\`\`json
+{ "filePath": ".env", "key": "DATABASE_URL" }
+\`\`\`
+Returns: \`{ file, key, result: { algorithm, fingerprint, length } }\`
+
+### envsitter_scan
+Detect value shapes (JWT, URL, base64) without revealing values.
+\`\`\`json
+{ "filePath": ".env", "detect": ["jwt", "url", "base64"], "keysFilterRegex": "/TOKEN/" }
+\`\`\`
+Returns: \`{ file, findings: [{ key, detections }] }\`
+`;
+
+                    const matching = `
+## Matching Tools (return booleans only)
+
+### envsitter_match
+Check if a key's value matches criteria without seeing the value.
+
+**Operations** (op parameter):
+- \`exists\`: key is present
+- \`is_empty\`: value is empty string
+- \`is_equal\`: matches candidate exactly (provide \`candidate\` or \`candidateEnvVar\`)
+- \`partial_match_prefix\`: value starts with candidate
+- \`partial_match_suffix\`: value ends with candidate
+- \`partial_match_regex\`: value matches regex pattern
+- \`is_number\`: value is numeric
+- \`is_boolean\`: value is true/false
+- \`is_string\`: value is neither number nor boolean
+
+**Selectors** (provide exactly one):
+- \`key\`: single key
+- \`keys\`: array of keys
+- \`allKeys: true\`: all keys in file
+
+\`\`\`json
+{ "filePath": ".env", "key": "NODE_ENV", "op": "is_equal", "candidate": "production" }
+{ "filePath": ".env", "keys": ["API_KEY", "SECRET"], "op": "exists" }
+{ "filePath": ".env", "allKeys": true, "op": "is_empty" }
+\`\`\`
+
+### envsitter_match_by_key
+Bulk match different candidates against different keys.
+\`\`\`json
+{ "filePath": ".env", "candidatesByKey": { "API_KEY": "sk-xxx", "DB_PASS": "secret123" } }
+\`\`\`
+Returns: \`{ file, matches: [{ key, match: boolean }] }\`
+`;
+
+                    const mutations = `
+## Mutation Tools (modify .env files safely)
+
+All mutation tools are DRY-RUN by default. Set \`write: true\` to apply changes.
+Output includes operation plan with line numbers, never values.
+
+### envsitter_add
+Add a NEW key (fails if key already exists).
+\`\`\`json
+{ "filePath": ".env", "key": "NEW_KEY", "value": "some-value", "write": true }
+\`\`\`
+Returns: \`{ file, key, hasChanges, plan: { action: "added"|"key_exists" } }\`
+
+### envsitter_set
+Create or update a key (upsert behavior).
+\`\`\`json
+{ "filePath": ".env", "key": "API_KEY", "value": "new-value", "write": true }
+\`\`\`
+Returns: \`{ file, key, hasChanges, plan: { action: "added"|"updated"|"no_change" } }\`
+
+### envsitter_unset
+Set a key to empty string (keeps the key line).
+\`\`\`json
+{ "filePath": ".env", "key": "OLD_KEY", "write": true }
+\`\`\`
+Returns: \`{ file, key, hasChanges, plan: { action: "unset"|"not_found" } }\`
+
+### envsitter_delete
+Remove key(s) entirely from the file.
+\`\`\`json
+{ "filePath": ".env", "keys": ["OLD_KEY", "UNUSED_KEY"], "write": true }
+\`\`\`
+Returns: \`{ file, keys, hasChanges, plan: [{ key, action: "deleted"|"not_found" }] }\`
+`;
+
+                    const fileOps = `
+## File Operation Tools
+
+### envsitter_validate
+Check .env file syntax for errors.
+\`\`\`json
+{ "filePath": ".env" }
+\`\`\`
+Returns: \`{ file, ok: boolean, issues: [{ line, column, message }] }\`
+
+### envsitter_copy
+Copy keys between .env files. Dry-run unless \`write: true\`.
+\`\`\`json
+{
+  "from": ".env.production",
+  "to": ".env.staging",
+  "keys": ["API_URL", "REDIS_URL"],
+  "onConflict": "overwrite",
+  "write": true
+}
+\`\`\`
+Options: \`includeRegex\`, \`excludeRegex\`, \`rename\` (e.g., "OLD=NEW,A=B")
+Returns: \`{ from, to, hasChanges, plan: [{ fromKey, toKey, action }] }\`
+
+### envsitter_format / envsitter_reorder
+Format/reorder a .env file. Dry-run unless \`write: true\`.
+\`\`\`json
+{ "filePath": ".env", "mode": "sections", "sort": "alpha", "write": true }
+\`\`\`
+Modes: \`sections\` (preserve section groupings), \`global\` (treat as flat list)
+Sort: \`alpha\` (alphabetical), \`none\` (preserve order within sections)
+
+### envsitter_annotate
+Add a comment above a key. Dry-run unless \`write: true\`.
+\`\`\`json
+{ "filePath": ".env", "key": "DATABASE_URL", "comment": "Production DB only", "write": true }
+\`\`\`
+Returns: \`{ file, key, hasChanges, plan: { action: "inserted"|"updated"|"not_found" } }\`
+`;
+
+                    const sections: Record<string, string> = {
+                        overview,
+                        reading,
+                        matching,
+                        mutations,
+                        file_ops: fileOps,
+                    };
+
+                    if (topic === "all") {
+                        return [overview, reading, matching, mutations, fileOps].join("\n---\n");
+                    }
+
+                    return sections[topic] ?? overview;
+                },
+            }),
         },
         "tool.execute.before": async (input, output) => {
             const filePath = getFilePathFromArgs(output.args);
@@ -568,15 +895,19 @@ export const EnvSitterGuard: Plugin = async ({ client, directory, worktree }) =>
             if (!isSensitiveDotEnvPath(filePath) && !isEnvSitterPepperPath(filePath)) return;
 
             if (input.tool === "read") {
-                await notifyBlocked("Reading");
                 throw new Error(
-                    "Reading `.env*` is blocked. Use EnvSitter tools instead: envsitter_keys / envsitter_fingerprint (never prints values)."
+                    "Reading `.env*` is blocked to prevent secret leaks. " +
+                        "Use EnvSitter tools instead (never prints values). " +
+                        "Call envsitter_help for comprehensive usage guide."
                 );
             }
 
             if (input.tool === "edit" || input.tool === "write" || input.tool === "patch" || input.tool === "multiedit") {
-                await notifyBlocked("Editing");
-                throw new Error("Editing `.env*` and `.envsitter/pepper` via tools is blocked.");
+                throw new Error(
+                    "Editing `.env*` and `.envsitter/pepper` via standard tools is blocked. " +
+                        "Use EnvSitter mutation tools: envsitter_add, envsitter_set, envsitter_unset, envsitter_delete. " +
+                        "Call envsitter_help for comprehensive usage guide."
+                );
             }
         },
     };

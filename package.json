@@ -1,8 +1,22 @@
 {
   "name": "envsitter-guard",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "OpenCode plugin that prevents agents/tools from reading or editing sensitive .env* files, while still allowing safe inspection via EnvSitter.",
   "license": "MIT",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "dotenv",
+    "env",
+    "secrets",
+    "security",
+    "guard",
+    "agent",
+    "llm",
+    "ai",
+    "mcp",
+    "envsitter"
+  ],
   "type": "module",
   "repository": {
     "type": "git",
@@ -31,7 +45,7 @@
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.1.14",
-    "envsitter": "^0.0.3"
+    "envsitter": "^0.0.4"
   },
   "devDependencies": {
     "@types/node": "*",

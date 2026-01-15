@@ -1,6 +1,20 @@
 # Changelog
 
-## Unreleased
+## 0.0.4
+
+### Added
+
+- `envsitter_add`: add a new key to a dotenv file (fails if key exists; dry-run unless `write: true`).
+- `envsitter_set`: set a key's value (creates or updates; dry-run unless `write: true`).
+- `envsitter_unset`: unset a key's value to empty string (keeps the key; dry-run unless `write: true`).
+- `envsitter_delete`: delete key(s) from a dotenv file entirely (dry-run unless `write: true`).
+- `envsitter_help`: comprehensive help tool explaining all EnvSitter tools to agents. Supports topics: `overview`, `reading`, `matching`, `mutations`, `file_ops`, `all`.
+
+### Changed
+
+- Blocking behavior is now silent (error message only, no toast notifications).
+- Improved error messages to reference `envsitter_help` for guidance.
+- Bumped `envsitter` dependency to `^0.0.4`.
 
 ## 0.0.3
 
