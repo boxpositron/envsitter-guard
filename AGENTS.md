@@ -1,6 +1,6 @@
 # AGENTS.md — envsitter-guard
 
-This repository is a minimal TypeScript plugin meant to run under OpenCode (`@opencode-ai/plugin`).
+This repository is a TypeScript plugin meant to run under OpenCode V2 (`@opencode/plugin`).
 
 ## Repo layout
 
@@ -107,15 +107,16 @@ This plugin is security-sensitive. Follow these patterns:
 
 ## Plugin behavior notes
 
-- OpenCode entrypoint is `EnvSitterGuard` exported from `index.ts`.
+- OpenCode entrypoint is the default-exported `EnvSitterGuard` definition from `index.ts`, with an ID and `setup`.
 - Plugin registration file `.opencode/plugin/envsitter-guard.ts` must remain a thin re-export.
-- Tool surface area intentionally small:
+- Tools are registered with `ctx.tool.transform`; examples include:
   - `envsitter_keys`: lists keys only (no values)
   - `envsitter_fingerprint`: deterministic fingerprint of a single key (no value)
-- Blocking behavior is enforced in `"tool.execute.before"`:
+- Blocking behavior is enforced in `ctx.tool.hook("execute.before", ...)`, using `event.input`:
   - Blocks reads of `.env*` (except `.env.example`).
   - Blocks edits/writes/patching of `.env*` and `.envsitter/pepper`.
-  - Throttles UI toasts via `lastToastAt`.
+  - Checks all native patch targets, including move destinations.
+  - Throws actionable errors without UI toasts.
 
 ## Path handling rules
 

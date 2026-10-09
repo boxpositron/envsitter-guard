@@ -1,116 +1,55 @@
 import assert from "node:assert/strict";
-import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import type { Hooks, PluginInput } from "@opencode-ai/plugin";
+import { loadPlugin } from "./plugin-fixture.js";
 
-import EnvSitterGuard from "../index.js";
-
-type ToolExecuteBeforeHook = NonNullable<Hooks["tool.execute.before"]>;
-
-async function createTmpDir(): Promise<string> {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "envsitter-guard-"));
-    return dir;
-}
-
-function createClientSpy(): {
-    client: {
-        tui: {
-            showToast: (input: { body: { title: string; variant: string; message: string } }) => Promise<void>;
-        };
-    };
-    calls: { showToast: number };
-} {
-    const calls = { showToast: 0 };
-
-    return {
-        calls,
-        client: {
-            tui: {
-                async showToast() {
-                    calls.showToast += 1;
-                },
-            },
-        },
-    };
-}
-
-async function getBeforeHook(params: { directory: string; worktree: string }) {
-    const { client, calls } = createClientSpy();
-
-    const pluginInput: PluginInput = {
-        client: client as unknown as PluginInput["client"],
-        project: {} as unknown as PluginInput["project"],
-        directory: params.directory,
-        worktree: params.worktree,
-        serverUrl: new URL("http://localhost"),
-        $: (() => {
-            throw new Error("not used in tests");
-        }) as unknown as PluginInput["$"],
-    };
-
-    const hooks = (await EnvSitterGuard(pluginInput)) as {
-        "tool.execute.before": ToolExecuteBeforeHook;
-    };
-
-    return { hook: hooks["tool.execute.before"], calls };
-}
-
-test("blocks reading .env", async () => {
-    const worktree = await createTmpDir();
-    const { hook } = await getBeforeHook({ directory: worktree, worktree });
-
-    await assert.rejects(
-        () => hook({ tool: "read", sessionID: "s", callID: "c" }, { args: { filePath: ".env" } }),
-        (err: unknown) => err instanceof Error && err.message.includes("Reading `.env*` is blocked"),
-    );
+test("blocks native reads and edits of secrets, but permits examples and safe tools", async () => {
+    const { before } = await loadPlugin({ directory: process.cwd(), worktree: process.cwd() });
+    for (const path of [".env", ".env.local", ".env.production", ".envsitter/pepper", "@.env"]) {
+        await assert.rejects(() => before("read", { path }), /Reading `.env\*` is blocked/);
+        for (const tool of ["edit", "write", "multiedit"]) {
+            await assert.rejects(() => before(tool, { path }), /Editing `.env\*`/);
+        }
+    }
+    await before("read", { path: ".env.example" });
+    await before("edit", { path: ".env.example" });
+    await before("read", { path: "index.ts" });
+    await before("envsitter_keys", { filePath: ".env" });
 });
 
-test("allows reading .env.example", async () => {
-    const worktree = await createTmpDir();
-    const { hook } = await getBeforeHook({ directory: worktree, worktree });
-
-    await hook({ tool: "read", sessionID: "s", callID: "c" }, { args: { filePath: ".env.example" } });
+test("recognizes legacy filePath and file_path arguments", async () => {
+    const { before } = await loadPlugin({ directory: process.cwd(), worktree: process.cwd() });
+    await assert.rejects(() => before("read", { filePath: "@.env" }), /blocked/);
+    await assert.rejects(() => before("write", { file_path: ".env.local" }), /blocked/);
 });
 
-test("blocks editing .env", async () => {
-    const worktree = await createTmpDir();
-    const { hook } = await getBeforeHook({ directory: worktree, worktree });
-
-    await assert.rejects(
-        () => hook({ tool: "edit", sessionID: "s", callID: "c" }, { args: { filePath: ".env" } }),
-        (err: unknown) => err instanceof Error && err.message.includes("Editing `.env*"),
-    );
+test("blocks every sensitive patch target, including moves and multi-file patches", async () => {
+    const { before } = await loadPlugin({ directory: process.cwd(), worktree: process.cwd() });
+    for (const header of [
+        "*** Add File: .env.local\n+KEY=value",
+        "*** Update File: .env\n@@\n-KEY=old\n+KEY=new",
+        "*** Delete File: .env.production",
+        "*** Update File: index.ts\n*** Move to: .env.local",
+        "*** Update File: .env\n*** Move to: .env.example",
+        "*** Add File: .env.example\n+KEY=\n*** Delete File: .envsitter/pepper",
+        "  *** Delete File: .envsitter/./pepper  ",
+    ]) {
+        await assert.rejects(
+            () => before("patch", { patchText: `*** Begin Patch\r\n${header}\r\n*** End Patch` }),
+            /Editing `.env\*`/,
+        );
+    }
+    await before("patch", { patchText: "*** Begin Patch\n*** Add File: .env.example\n+KEY=\n*** End Patch" });
 });
 
-test("blocks .envsitter/pepper", async () => {
-    const worktree = await createTmpDir();
-    const { hook } = await getBeforeHook({ directory: worktree, worktree });
-
-    await assert.rejects(
-        () => hook({ tool: "read", sessionID: "s", callID: "c" }, { args: { filePath: ".envsitter/pepper" } }),
-        (err: unknown) => err instanceof Error && err.message.includes("blocked"),
-    );
-});
-
-test("strips @ prefix in filePath", async () => {
-    const worktree = await createTmpDir();
-    const { hook } = await getBeforeHook({ directory: worktree, worktree });
-
-    await assert.rejects(
-        () => hook({ tool: "read", sessionID: "s", callID: "c" }, { args: { filePath: "@.env" } }),
-        (err: unknown) => err instanceof Error && err.message.includes("Reading `.env*` is blocked"),
-    );
-});
-
-test("blocking is silent (no toasts)", async () => {
-    const worktree = await createTmpDir();
-    const { hook, calls } = await getBeforeHook({ directory: worktree, worktree });
-
-    await assert.rejects(() => hook({ tool: "read", sessionID: "s", callID: "c" }, { args: { filePath: ".env" } }));
-    await assert.rejects(() => hook({ tool: "read", sessionID: "s", callID: "c" }, { args: { filePath: ".env" } }));
-
-    assert.equal(calls.showToast, 0, "should not show toasts, only throw errors");
+test("protects pepper when paths are relative to the active directory", async () => {
+    const worktree = process.cwd();
+    const { before } = await loadPlugin({ directory: path.join(worktree, ".envsitter"), worktree });
+    await assert.rejects(() => before("read", { path: "pepper" }), /blocked/);
+    await assert.rejects(() => before("write", { path: "./pepper" }), /blocked/);
+    await assert.rejects(() => before("patch", {
+        patchText: "*** Begin Patch\n*** Delete File: pepper\n*** End Patch",
+    }), /blocked/);
+    await before("read", { path: "../.env.example" });
 });
