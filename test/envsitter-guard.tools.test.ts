@@ -4,87 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import type { PluginInput } from "@opencode-ai/plugin";
-
-import EnvSitterGuard from "../index.js";
-
-type MatchOp =
-    | "exists"
-    | "is_empty"
-    | "is_equal"
-    | "partial_match_prefix"
-    | "partial_match_suffix"
-    | "partial_match_regex"
-    | "is_number"
-    | "is_boolean"
-    | "is_string";
-
-type ScanDetection = "jwt" | "url" | "base64";
-
-type ToolApi = {
-    envsitter_keys: {
-        execute: (args: { filePath?: string; filterRegex?: string }) => Promise<string>;
-    };
-    envsitter_fingerprint: {
-        execute: (args: { filePath?: string; key: string }) => Promise<string>;
-    };
-    envsitter_match: {
-        execute: (args: {
-            filePath?: string;
-            op?: MatchOp;
-            key?: string;
-            keys?: string[];
-            allKeys?: boolean;
-            candidate?: string;
-            candidateEnvVar?: string;
-        }) => Promise<string>;
-    };
-    envsitter_match_by_key: {
-        execute: (args: {
-            filePath?: string;
-            candidatesByKey?: Record<string, string>;
-            candidatesByKeyJson?: string;
-            candidatesByKeyEnvVar?: string;
-        }) => Promise<string>;
-    };
-    envsitter_scan: {
-        execute: (args: { filePath?: string; detect?: ScanDetection[]; keysFilterRegex?: string }) => Promise<string>;
-    };
-    envsitter_validate: {
-        execute: (args: { filePath?: string }) => Promise<string>;
-    };
-    envsitter_copy: {
-        execute: (args: {
-            from: string;
-            to: string;
-            keys?: string[];
-            includeRegex?: string;
-            excludeRegex?: string;
-            rename?: string;
-            onConflict?: "error" | "skip" | "overwrite";
-            write?: boolean;
-        }) => Promise<string>;
-    };
-    envsitter_format: {
-        execute: (args: {
-            filePath?: string;
-            mode?: "sections" | "global";
-            sort?: "alpha" | "none";
-            write?: boolean;
-        }) => Promise<string>;
-    };
-    envsitter_reorder: {
-        execute: (args: {
-            filePath?: string;
-            mode?: "sections" | "global";
-            sort?: "alpha" | "none";
-            write?: boolean;
-        }) => Promise<string>;
-    };
-    envsitter_annotate: {
-        execute: (args: { filePath?: string; key: string; comment: string; line?: number; write?: boolean }) => Promise<string>;
-    };
-};
+import { loadPlugin } from "./plugin-fixture.js";
 
 async function createTmpDir(): Promise<string> {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "envsitter-guard-"));
@@ -110,32 +30,9 @@ async function withPepper<T>(fn: () => Promise<T>): Promise<T> {
     return withEnvVar("ENVSITTER_PEPPER", "test-pepper", fn);
 }
 
-function createMinimalClient(): PluginInput["client"] {
-    return {
-        tui: {
-            async showToast() {},
-            async appendPrompt() {},
-        },
-    } as unknown as PluginInput["client"];
-}
-
-async function getTools(params: { directory: string; worktree: string }): Promise<ToolApi> {
-    const pluginInput: PluginInput = {
-        client: createMinimalClient(),
-        project: {} as unknown as PluginInput["project"],
-        directory: params.directory,
-        worktree: params.worktree,
-        serverUrl: new URL("http://localhost"),
-        $: (() => {
-            throw new Error("not used in tests");
-        }) as unknown as PluginInput["$"],
-    };
-
-    const hooks = (await EnvSitterGuard(pluginInput)) as unknown as {
-        tool: ToolApi;
-    };
-
-    return hooks.tool;
+async function getTools(params: { directory: string; worktree: string }) {
+    const { tools } = await loadPlugin(params);
+    return tools;
 }
 
 test("envsitter_keys lists keys without values", async () => {
@@ -391,4 +288,40 @@ test("envsitter_annotate adds comments without leaking values", async () => {
     const content = await fs.readFile(path.join(worktree, ".env"), "utf8");
     assert.ok(content.includes("prod only"));
     assert.ok(content.includes("FOO=bar"));
+});
+
+test("mutation tools retain dry-run defaults and return plans without values", async () => {
+    const worktree = await createTmpDir();
+    const file = path.join(worktree, ".env");
+    await fs.writeFile(file, "EXISTING=original\n");
+    const tools = await getTools({ directory: worktree, worktree });
+    for (const [name, args] of [
+        ["envsitter_add", { key: "NEW", value: "new-secret" }],
+        ["envsitter_set", { key: "EXISTING", value: "updated-secret" }],
+        ["envsitter_unset", { key: "EXISTING" }],
+        ["envsitter_delete", { keys: ["EXISTING"] }],
+    ] as const) {
+        const out = await tools[name].execute(args);
+        assert(!out.includes("original"));
+        assert(!out.includes("new-secret"));
+        assert(!out.includes("updated-secret"));
+        assert.equal(await fs.readFile(file, "utf8"), "EXISTING=original\n");
+    }
+    await tools.envsitter_add.execute({ key: "NEW", value: "new-secret", write: true });
+    await tools.envsitter_set.execute({ key: "NEW", value: "updated-secret", write: true });
+    assert.equal(await fs.readFile(file, "utf8"), "EXISTING=original\nNEW=updated-secret\n");
+    await tools.envsitter_unset.execute({ key: "NEW", write: true });
+    assert.equal(await fs.readFile(file, "utf8"), "EXISTING=original\nNEW=\n");
+    await tools.envsitter_delete.execute({ keys: ["NEW"], write: true });
+    assert.equal(await fs.readFile(file, "utf8"), "EXISTING=original\n");
+});
+
+test("help and reorder remain usable through V2 tool registrations", async () => {
+    const worktree = await createTmpDir();
+    await fs.writeFile(path.join(worktree, ".env"), "B=2\nA=1\n");
+    const tools = await getTools({ directory: worktree, worktree });
+    const help = await tools.envsitter_help.execute({ topic: "reading" });
+    assert(help.includes("envsitter_keys"));
+    await tools.envsitter_reorder.execute({ mode: "global", sort: "alpha", write: true });
+    assert.equal(await fs.readFile(path.join(worktree, ".env"), "utf8"), "A=1\nB=2\n");
 });

@@ -1,5 +1,5 @@
-import type { Plugin } from "@opencode-ai/plugin";
-import { tool } from "@opencode-ai/plugin/tool";
+import { Plugin } from "@opencode/plugin";
+import { z } from "zod";
 import {
     EnvSitter,
     addEnvFileKey,
@@ -14,7 +14,7 @@ import {
 import path from "node:path";
 
 function normalizePath(input: string): string {
-    return input.replace(/\\/g, "/");
+    return path.posix.normalize(input.replace(/\\/g, "/"));
 }
 
 function isDotEnvExamplePath(input: string): boolean {
@@ -86,14 +86,22 @@ function resolveCandidate(params: { candidate?: string; candidateEnvVar?: string
     throw new Error("Candidate is required for this operation. Provide `candidate` or `candidateEnvVar`.");
 }
 
-function getFilePathFromArgs(args: unknown): string | undefined {
-    if (!args || typeof args !== "object") return;
+function getFilePathsFromArgs(args: unknown): string[] {
+    if (args === null || typeof args !== "object") return [];
     const record = args as Record<string, unknown>;
 
-    const candidates: Array<unknown> = [record.filePath, record.path, record.file_path];
+    return [record.path, record.filePath, record.file_path]
+        .filter((value): value is string => typeof value === "string")
+        .map(stripAtPrefix);
+}
 
-    const found = candidates.find((value) => typeof value === "string") as string | undefined;
-    return found ? stripAtPrefix(found) : undefined;
+function getPatchPaths(input: unknown): string[] {
+    if (input === null || typeof input !== "object" || !("patchText" in input)) return [];
+    if (typeof input.patchText !== "string") return [];
+    return input.patchText.split("\n").flatMap((line) => {
+        const match = /^\*\*\* (?:Add File|Update File|Delete File|Move to):\s*(.+)$/.exec(line.trim());
+        return match === null ? [] : [match[1].trim()];
+    });
 }
 
 function resolveDotEnvPath(params: {
@@ -120,29 +128,33 @@ function resolveDotEnvPath(params: {
     return { absolutePath, displayPath: relativeToWorktree };
 }
 
-export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
-    const matchOps = [
-        "exists",
-        "is_empty",
-        "is_equal",
-        "partial_match_prefix",
-        "partial_match_suffix",
-        "partial_match_regex",
-        "is_number",
-        "is_boolean",
-        "is_string",
-    ] as const;
+export const EnvSitterGuard = Plugin.define({
+    id: "envsitter-guard",
+    async setup(ctx) {
+        const directory = ctx.location.directory;
+        const worktree = ctx.location.project.directory;
+        const matchOps = [
+            "exists",
+            "is_empty",
+            "is_equal",
+            "partial_match_prefix",
+            "partial_match_suffix",
+            "partial_match_regex",
+            "is_number",
+            "is_boolean",
+            "is_string",
+        ] as const;
 
-    const scanDetections = ["jwt", "url", "base64"] as const;
+        const scanDetections = ["jwt", "url", "base64"] as const;
 
-    return {
-        tool: {
-            envsitter_keys: tool({
+        await ctx.tool.transform((editor) => {
+            editor.add({
+                name: "envsitter_keys",
                 description: "List keys in a .env file (never returns values).",
-                args: {
-                    filePath: tool.schema.string().optional(),
-                    filterRegex: tool.schema.string().optional(),
-                },
+                input: z.object({
+                    filePath: z.string().optional(),
+                    filterRegex: z.string().optional(),
+                }),
                 async execute(args) {
                     const resolved = resolveDotEnvPath({
                         worktree,
@@ -159,15 +171,16 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                             : undefined,
                     );
 
-                    return JSON.stringify({ file: resolved.displayPath, keys }, null, 2);
+                    return { content: JSON.stringify({ file: resolved.displayPath, keys }, null, 2) };
                 },
-            }),
-            envsitter_fingerprint: tool({
+            });
+            editor.add({
+                name: "envsitter_fingerprint",
                 description: "Compute a deterministic fingerprint for a single key (never returns the value).",
-                args: {
-                    filePath: tool.schema.string().optional(),
-                    key: tool.schema.string(),
-                },
+                input: z.object({
+                    filePath: z.string().optional(),
+                    key: z.string(),
+                }),
                 async execute(args) {
                     const resolved = resolveDotEnvPath({
                         worktree,
@@ -178,21 +191,24 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                     const es = EnvSitter.fromDotenvFile(resolved.absolutePath);
                     const result = await es.fingerprintKey(args.key);
 
-                    return JSON.stringify({ file: resolved.displayPath, key: args.key, result }, null, 2);
+                    return {
+                        content: JSON.stringify({ file: resolved.displayPath, key: args.key, result }, null, 2),
+                    };
                 },
-            }),
-            envsitter_match: tool({
+            });
+            editor.add({
+                name: "envsitter_match",
                 description:
                     "Match key values without printing them. Supports existence/shape checks and outside-in candidate matching.",
-                args: {
-                    filePath: tool.schema.string().optional(),
-                    op: tool.schema.enum(matchOps).optional(),
-                    key: tool.schema.string().optional(),
-                    keys: tool.schema.array(tool.schema.string()).optional(),
-                    allKeys: tool.schema.boolean().optional(),
-                    candidate: tool.schema.string().optional(),
-                    candidateEnvVar: tool.schema.string().optional(),
-                },
+                input: z.object({
+                    filePath: z.string().optional(),
+                    op: z.enum(matchOps).optional(),
+                    key: z.string().optional(),
+                    keys: z.array(z.string()).optional(),
+                    allKeys: z.boolean().optional(),
+                    candidate: z.string().optional(),
+                    candidateEnvVar: z.string().optional(),
+                }),
                 async execute(args) {
                     const resolved = resolveDotEnvPath({
                         worktree,
@@ -252,7 +268,9 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                             matcher.op === "is_equal" && typeof isEqualCandidate === "string"
                                 ? await es.matchCandidate(key, isEqualCandidate)
                                 : await es.matchKey(key, matcher);
-                        return JSON.stringify({ file: resolved.displayPath, key, op: matcher.op, match }, null, 2);
+                        return {
+                            content: JSON.stringify({ file: resolved.displayPath, key, op: matcher.op, match }, null, 2),
+                        };
                     }
 
                     if (Array.isArray(keys) && keys.length > 0) {
@@ -260,24 +278,29 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                             matcher.op === "is_equal" && typeof isEqualCandidate === "string"
                                 ? await es.matchCandidateBulk(keys, isEqualCandidate)
                                 : await es.matchKeyBulk(keys, matcher);
-                        return JSON.stringify({ file: resolved.displayPath, op: matcher.op, matches }, null, 2);
+                        return {
+                            content: JSON.stringify({ file: resolved.displayPath, op: matcher.op, matches }, null, 2),
+                        };
                     }
 
                     const matches =
                         matcher.op === "is_equal" && typeof isEqualCandidate === "string"
                             ? await es.matchCandidateAll(isEqualCandidate)
                             : await es.matchKeyAll(matcher);
-                    return JSON.stringify({ file: resolved.displayPath, op: matcher.op, matches }, null, 2);
+                    return {
+                        content: JSON.stringify({ file: resolved.displayPath, op: matcher.op, matches }, null, 2),
+                    };
                 },
-            }),
-            envsitter_match_by_key: tool({
+            });
+            editor.add({
+                name: "envsitter_match_by_key",
                 description: "Bulk match candidates-by-key without printing values (returns booleans only).",
-                args: {
-                    filePath: tool.schema.string().optional(),
-                    candidatesByKey: tool.schema.record(tool.schema.string(), tool.schema.string()).optional(),
-                    candidatesByKeyJson: tool.schema.string().optional(),
-                    candidatesByKeyEnvVar: tool.schema.string().optional(),
-                },
+                input: z.object({
+                    filePath: z.string().optional(),
+                    candidatesByKey: z.record(z.string(), z.string()).optional(),
+                    candidatesByKeyJson: z.string().optional(),
+                    candidatesByKeyEnvVar: z.string().optional(),
+                }),
                 async execute(args) {
                     const resolved = resolveDotEnvPath({
                         worktree,
@@ -336,16 +359,17 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                     const es = EnvSitter.fromDotenvFile(resolved.absolutePath);
                     const matches = await es.matchCandidatesByKey(candidatesByKey);
 
-                    return JSON.stringify({ file: resolved.displayPath, matches }, null, 2);
+                    return { content: JSON.stringify({ file: resolved.displayPath, matches }, null, 2) };
                 },
-            }),
-            envsitter_scan: tool({
+            });
+            editor.add({
+                name: "envsitter_scan",
                 description: "Scan value shapes (jwt/url/base64) without printing values.",
-                args: {
-                    filePath: tool.schema.string().optional(),
-                    detect: tool.schema.array(tool.schema.enum(scanDetections)).optional(),
-                    keysFilterRegex: tool.schema.string().optional(),
-                },
+                input: z.object({
+                    filePath: z.string().optional(),
+                    detect: z.array(z.enum(scanDetections)).optional(),
+                    keysFilterRegex: z.string().optional(),
+                }),
                 async execute(args) {
                     const resolved = resolveDotEnvPath({
                         worktree,
@@ -359,14 +383,15 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                         keysFilter: args.keysFilterRegex ? parseUserRegExp(args.keysFilterRegex) : undefined,
                     });
 
-                    return JSON.stringify({ file: resolved.displayPath, findings }, null, 2);
+                    return { content: JSON.stringify({ file: resolved.displayPath, findings }, null, 2) };
                 },
-            }),
-            envsitter_validate: tool({
+            });
+            editor.add({
+                name: "envsitter_validate",
                 description: "Validate dotenv syntax (never returns values).",
-                args: {
-                    filePath: tool.schema.string().optional(),
-                },
+                input: z.object({
+                    filePath: z.string().optional(),
+                }),
                 async execute(args) {
                     const resolved = resolveDotEnvPath({
                         worktree,
@@ -375,22 +400,25 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                     });
 
                     const result = await validateEnvFile(resolved.absolutePath);
-                    return JSON.stringify({ file: resolved.displayPath, ok: result.ok, issues: result.issues }, null, 2);
+                    return {
+                        content: JSON.stringify({ file: resolved.displayPath, ok: result.ok, issues: result.issues }, null, 2),
+                    };
                 },
-            }),
-            envsitter_copy: tool({
+            });
+            editor.add({
+                name: "envsitter_copy",
                 description:
                     "Copy keys between dotenv files safely (no values in output). Dry-run unless `write: true`.",
-                args: {
-                    from: tool.schema.string(),
-                    to: tool.schema.string(),
-                    keys: tool.schema.array(tool.schema.string()).optional(),
-                    includeRegex: tool.schema.string().optional(),
-                    excludeRegex: tool.schema.string().optional(),
-                    rename: tool.schema.string().optional(),
-                    onConflict: tool.schema.enum(["error", "skip", "overwrite"] as const).optional(),
-                    write: tool.schema.boolean().optional(),
-                },
+                input: z.object({
+                    from: z.string(),
+                    to: z.string(),
+                    keys: z.array(z.string()).optional(),
+                    includeRegex: z.string().optional(),
+                    excludeRegex: z.string().optional(),
+                    rename: z.string().optional(),
+                    onConflict: z.enum(["error", "skip", "overwrite"] as const).optional(),
+                    write: z.boolean().optional(),
+                }),
                 async execute(args) {
                     const resolvedFrom = resolveDotEnvPath({
                         worktree,
@@ -419,7 +447,7 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                         write: args.write === true,
                     });
 
-                    return JSON.stringify(
+                    return { content: JSON.stringify(
                         {
                             from: resolvedFrom.displayPath,
                             to: resolvedTo.displayPath,
@@ -432,17 +460,18 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                         },
                         null,
                         2,
-                    );
+                    ) };
                 },
-            }),
-            envsitter_format: tool({
+            });
+            editor.add({
+                name: "envsitter_format",
                 description: "Format/reorder a dotenv file (no values in output). Dry-run unless `write: true`.",
-                args: {
-                    filePath: tool.schema.string().optional(),
-                    mode: tool.schema.enum(["sections", "global"] as const).optional(),
-                    sort: tool.schema.enum(["alpha", "none"] as const).optional(),
-                    write: tool.schema.boolean().optional(),
-                },
+                input: z.object({
+                    filePath: z.string().optional(),
+                    mode: z.enum(["sections", "global"] as const).optional(),
+                    sort: z.enum(["alpha", "none"] as const).optional(),
+                    write: z.boolean().optional(),
+                }),
                 async execute(args) {
                     const resolved = resolveDotEnvPath({
                         worktree,
@@ -457,7 +486,7 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                         write: args.write === true,
                     });
 
-                    return JSON.stringify(
+                    return { content: JSON.stringify(
                         {
                             file: resolved.displayPath,
                             mode: result.mode,
@@ -469,17 +498,18 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                         },
                         null,
                         2,
-                    );
+                    ) };
                 },
-            }),
-            envsitter_reorder: tool({
+            });
+            editor.add({
+                name: "envsitter_reorder",
                 description: "Alias for envsitter_format.",
-                args: {
-                    filePath: tool.schema.string().optional(),
-                    mode: tool.schema.enum(["sections", "global"] as const).optional(),
-                    sort: tool.schema.enum(["alpha", "none"] as const).optional(),
-                    write: tool.schema.boolean().optional(),
-                },
+                input: z.object({
+                    filePath: z.string().optional(),
+                    mode: z.enum(["sections", "global"] as const).optional(),
+                    sort: z.enum(["alpha", "none"] as const).optional(),
+                    write: z.boolean().optional(),
+                }),
                 async execute(args) {
                     const resolved = resolveDotEnvPath({
                         worktree,
@@ -494,7 +524,7 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                         write: args.write === true,
                     });
 
-                    return JSON.stringify(
+                    return { content: JSON.stringify(
                         {
                             file: resolved.displayPath,
                             mode: result.mode,
@@ -506,18 +536,19 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                         },
                         null,
                         2,
-                    );
+                    ) };
                 },
-            }),
-            envsitter_annotate: tool({
+            });
+            editor.add({
+                name: "envsitter_annotate",
                 description: "Annotate a dotenv key with a comment (no values in output). Dry-run unless `write: true`.",
-                args: {
-                    filePath: tool.schema.string().optional(),
-                    key: tool.schema.string(),
-                    comment: tool.schema.string(),
-                    line: tool.schema.number().int().optional(),
-                    write: tool.schema.boolean().optional(),
-                },
+                input: z.object({
+                    filePath: z.string().optional(),
+                    key: z.string(),
+                    comment: z.string(),
+                    line: z.number().int().optional(),
+                    write: z.boolean().optional(),
+                }),
                 async execute(args) {
                     const resolved = resolveDotEnvPath({
                         worktree,
@@ -537,7 +568,7 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                         write: args.write === true,
                     });
 
-                    return JSON.stringify(
+                    return { content: JSON.stringify(
                         {
                             file: resolved.displayPath,
                             key: result.key,
@@ -549,18 +580,19 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                         },
                         null,
                         2,
-                    );
+                    ) };
                 },
-            }),
-            envsitter_add: tool({
+            });
+            editor.add({
+                name: "envsitter_add",
                 description:
                     "Add a new key to a dotenv file (fails if key already exists). Dry-run unless `write: true`.",
-                args: {
-                    filePath: tool.schema.string().optional(),
-                    key: tool.schema.string(),
-                    value: tool.schema.string(),
-                    write: tool.schema.boolean().optional(),
-                },
+                input: z.object({
+                    filePath: z.string().optional(),
+                    key: z.string(),
+                    value: z.string(),
+                    write: z.boolean().optional(),
+                }),
                 async execute(args) {
                     const resolved = resolveDotEnvPath({
                         worktree,
@@ -575,7 +607,7 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                         write: args.write === true,
                     });
 
-                    return JSON.stringify(
+                    return { content: JSON.stringify(
                         {
                             file: resolved.displayPath,
                             key: result.key,
@@ -587,18 +619,19 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                         },
                         null,
                         2,
-                    );
+                    ) };
                 },
-            }),
-            envsitter_set: tool({
+            });
+            editor.add({
+                name: "envsitter_set",
                 description:
                     "Set a key's value in a dotenv file (creates if missing, updates if exists). Dry-run unless `write: true`.",
-                args: {
-                    filePath: tool.schema.string().optional(),
-                    key: tool.schema.string(),
-                    value: tool.schema.string(),
-                    write: tool.schema.boolean().optional(),
-                },
+                input: z.object({
+                    filePath: z.string().optional(),
+                    key: z.string(),
+                    value: z.string(),
+                    write: z.boolean().optional(),
+                }),
                 async execute(args) {
                     const resolved = resolveDotEnvPath({
                         worktree,
@@ -613,7 +646,7 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                         write: args.write === true,
                     });
 
-                    return JSON.stringify(
+                    return { content: JSON.stringify(
                         {
                             file: resolved.displayPath,
                             key: result.key,
@@ -625,17 +658,18 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                         },
                         null,
                         2,
-                    );
+                    ) };
                 },
-            }),
-            envsitter_unset: tool({
+            });
+            editor.add({
+                name: "envsitter_unset",
                 description:
                     "Unset a key's value in a dotenv file (sets to empty string, keeps the key). Dry-run unless `write: true`.",
-                args: {
-                    filePath: tool.schema.string().optional(),
-                    key: tool.schema.string(),
-                    write: tool.schema.boolean().optional(),
-                },
+                input: z.object({
+                    filePath: z.string().optional(),
+                    key: z.string(),
+                    write: z.boolean().optional(),
+                }),
                 async execute(args) {
                     const resolved = resolveDotEnvPath({
                         worktree,
@@ -649,7 +683,7 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                         write: args.write === true,
                     });
 
-                    return JSON.stringify(
+                    return { content: JSON.stringify(
                         {
                             file: resolved.displayPath,
                             key: result.key,
@@ -661,17 +695,18 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                         },
                         null,
                         2,
-                    );
+                    ) };
                 },
-            }),
-            envsitter_delete: tool({
+            });
+            editor.add({
+                name: "envsitter_delete",
                 description:
                     "Delete key(s) from a dotenv file entirely (removes the line). Dry-run unless `write: true`.",
-                args: {
-                    filePath: tool.schema.string().optional(),
-                    keys: tool.schema.array(tool.schema.string()),
-                    write: tool.schema.boolean().optional(),
-                },
+                input: z.object({
+                    filePath: z.string().optional(),
+                    keys: z.array(z.string()),
+                    write: z.boolean().optional(),
+                }),
                 async execute(args) {
                     const resolved = resolveDotEnvPath({
                         worktree,
@@ -685,7 +720,7 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                         write: args.write === true,
                     });
 
-                    return JSON.stringify(
+                    return { content: JSON.stringify(
                         {
                             file: resolved.displayPath,
                             keys: result.keys,
@@ -697,14 +732,15 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                         },
                         null,
                         2,
-                    );
+                    ) };
                 },
-            }),
-            envsitter_help: tool({
+            });
+            editor.add({
+                name: "envsitter_help",
                 description:
                     "Get comprehensive help on all EnvSitter tools. Call this to understand how to safely work with .env files without exposing secrets.",
-                args: {
-                    topic: tool.schema
+                input: z.object({
+                    topic: z
                         .enum([
                             "overview",
                             "reading",
@@ -714,7 +750,7 @@ export const EnvSitterGuard: Plugin = async ({ directory, worktree }) => {
                             "all",
                         ] as const)
                         .optional(),
-                },
+                }),
                 async execute(args) {
                     const topic = args.topic ?? "all";
 
@@ -881,20 +917,21 @@ Returns: \`{ file, key, hasChanges, plan: { action: "inserted"|"updated"|"not_fo
                     };
 
                     if (topic === "all") {
-                        return [overview, reading, matching, mutations, fileOps].join("\n---\n");
+                        return { content: [overview, reading, matching, mutations, fileOps].join("\n---\n") };
                     }
 
-                    return sections[topic] ?? overview;
+                    return { content: sections[topic] ?? overview };
                 },
-            }),
-        },
-        "tool.execute.before": async (input, output) => {
-            const filePath = getFilePathFromArgs(output.args);
-            if (!filePath) return;
+            });
+        });
+        await ctx.tool.hook("execute.before", async (event) => {
+            const paths = event.tool === "patch" ? getPatchPaths(event.input) : getFilePathsFromArgs(event.input);
+            if (!paths.some((filePath) => {
+                const absolutePath = path.resolve(directory, normalizePath(filePath));
+                return isSensitiveDotEnvPath(absolutePath) || isEnvSitterPepperPath(absolutePath);
+            })) return;
 
-            if (!isSensitiveDotEnvPath(filePath) && !isEnvSitterPepperPath(filePath)) return;
-
-            if (input.tool === "read") {
+            if (event.tool === "read") {
                 throw new Error(
                     "Reading `.env*` is blocked to prevent secret leaks. " +
                         "Use EnvSitter tools instead (never prints values). " +
@@ -902,15 +939,15 @@ Returns: \`{ file, key, hasChanges, plan: { action: "inserted"|"updated"|"not_fo
                 );
             }
 
-            if (input.tool === "edit" || input.tool === "write" || input.tool === "patch" || input.tool === "multiedit") {
+            if (event.tool === "edit" || event.tool === "write" || event.tool === "patch" || event.tool === "multiedit") {
                 throw new Error(
                     "Editing `.env*` and `.envsitter/pepper` via standard tools is blocked. " +
                         "Use EnvSitter mutation tools: envsitter_add, envsitter_set, envsitter_unset, envsitter_delete. " +
                         "Call envsitter_help for comprehensive usage guide."
                 );
             }
-        },
-    };
-};
+        });
+    },
+});
 
 export default EnvSitterGuard;
