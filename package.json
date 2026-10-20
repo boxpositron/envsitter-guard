@@ -1,8 +1,9 @@
 {
   "name": "envsitter-guard",
-  "version": "0.0.4",
-  "description": "OpenCode plugin that prevents agents/tools from reading or editing sensitive .env* files, while still allowing safe inspection via EnvSitter.",
+  "version": "0.1.0",
+  "description": "OpenCode plugin (OpenCode 1 and 2) that prevents agents/tools from reading or editing sensitive .env files, while still allowing safe inspection via EnvSitter.",
   "license": "MIT",
+  "homepage": "https://boxpositron.github.io/envsitter/guard/",
   "keywords": [
     "opencode",
     "opencode-plugin",
@@ -40,17 +41,27 @@
     "typecheck": "tsc -p tsconfig.json",
     "build:test": "tsc -p tsconfig.test.json",
     "test": "npm run build:test && node --test dist-test/test/*.test.js",
+    "test:e2e": "npm run build && node scripts/e2e-opencode.mjs",
     "prepack": "npm run build",
     "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.1.14",
-    "envsitter": "^0.0.4"
+    "@opencode-ai/plugin": "^1.19.3",
+    "envsitter": "^0.1.0"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": ">=2.0.32"
+  },
+  "peerDependenciesMeta": {
+    "@opencode/plugin": {
+      "optional": true
+    }
   },
   "devDependencies": {
-    "@types/node": "*",
+    "@opencode/plugin": "^2.1.0",
+    "@types/node": "^22.20.5",
     "husky": "^9.1.7",
-    "typescript": "*"
+    "typescript": "^6.0.3"
   },
   "publishConfig": {
     "access": "public"

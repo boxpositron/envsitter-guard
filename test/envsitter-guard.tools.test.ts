@@ -125,13 +125,14 @@ async function getTools(params: { directory: string; worktree: string }): Promis
         project: {} as unknown as PluginInput["project"],
         directory: params.directory,
         worktree: params.worktree,
+        experimental_workspace: { register() {} },
         serverUrl: new URL("http://localhost"),
         $: (() => {
             throw new Error("not used in tests");
         }) as unknown as PluginInput["$"],
     };
 
-    const hooks = (await EnvSitterGuard(pluginInput)) as unknown as {
+    const hooks = (await EnvSitterGuard.server(pluginInput)) as unknown as {
         tool: ToolApi;
     };
 
@@ -303,6 +304,24 @@ test("tool execution rejects paths outside worktree", async () => {
         () => tools.envsitter_keys.execute({ filePath: "../../../.env" }),
         (err: unknown) => err instanceof Error && err.message.includes("inside the current project"),
     );
+});
+
+test("envsitter tools accept named env files such as api.env", async () => {
+    await withPepper(async () => {
+        const worktree = await createTmpDir();
+        await fs.writeFile(path.join(worktree, "api.env"), "API_TOKEN=secret-token\n");
+
+        const tools = await getTools({ directory: worktree, worktree });
+        const out = await tools.envsitter_keys.execute({ filePath: "api.env" });
+
+        assert.ok(!out.includes("secret-token"));
+        assert.deepEqual((JSON.parse(out) as { keys: string[] }).keys, ["API_TOKEN"]);
+
+        await assert.rejects(
+            () => tools.envsitter_keys.execute({ filePath: "src/index.ts" }),
+            (err: unknown) => err instanceof Error && err.message.includes("Only dotenv files are allowed"),
+        );
+    });
 });
 
 test("tool execution blocks .envsitter/pepper", async () => {
