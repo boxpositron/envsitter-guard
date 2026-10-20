@@ -51,7 +51,7 @@ Tests use Node’s built-in test runner, compiled via `tsc` into `dist-test/`.
 - Cross-version e2e (needs the CLIs installed; not part of `npm test`): `npm run test:e2e`
 - Run a single test file:
   - `npm run build:test && node --test dist-test/test/envsitter-guard.v2.test.js`
-- Until `envsitter` 0.1.0 is published, tests need a local build: `npm pack` in `../envsitter`, then `npm install --no-save <tarball>` here.
+- To test against an unreleased `envsitter`: `npm pack` in `../envsitter`, then `npm install --no-save <tarball>` here (CI always uses the published version from the lockfile).
 
 Pre-commit checks are enforced via Husky:
 - `npm install` installs the git hook.
