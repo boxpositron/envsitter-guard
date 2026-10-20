@@ -1,0 +1,79 @@
+name: Release
+
+# Push a vX.Y.Z tag after bumping package.json and dating the CHANGELOG section.
+# The Verify job reruns CI, including the OpenCode 1 + 2 end-to-end check, before anything is published.
+# Publishing uses npm trusted publishing (OIDC): no npm token is stored in this repository.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify
+    # GitHub only: npm trusted publishing needs GitHub's OIDC token; later jobs skip with this one.
+    if: github.server_url == 'https://github.com'
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Publish to npm
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      HUSKY: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Use npm 12 (trusted publishing needs 11.5.1 or later)
+        run: npm install -g npm@12
+      - name: Check tag, package.json, and CHANGELOG agree
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          package_version="$(node -p "require('./package.json').version")"
+          if [ "$version" != "$package_version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $package_version"
+            exit 1
+          fi
+          node .github/scripts/changelog-section.mjs "$version" > /dev/null
+      - run: npm ci
+      - name: Publish
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ "$version" == *-* ]]; then
+            npm publish --access public --tag next
+          else
+            npm publish --access public
+          fi
+
+  github-release:
+    name: GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Create release from CHANGELOG
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          node .github/scripts/changelog-section.mjs "$version" > release-notes.md
+          prerelease=""
+          if [[ "$version" == *-* ]]; then prerelease="--prerelease"; fi
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file release-notes.md $prerelease

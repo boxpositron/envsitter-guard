@@ -1,0 +1,30 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      opencode-plugin-sdks:
+        patterns: ["@opencode-ai/plugin", "@opencode/plugin"]
+      dev-dependencies:
+        dependency-type: development
+    ignore:
+      # TypeScript 7 ships no tsserver.js, which editors and typescript-language-server still need.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      # @types/node tracks the oldest Node version CI tests (22).
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]

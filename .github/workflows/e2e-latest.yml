@@ -1,0 +1,33 @@
+name: E2E (latest OpenCode)
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: E2E (latest OpenCode 1 + 2)
+    # GitHub only: the Gitea origin also runs .github/workflows.
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-latest
+    env:
+      HUSKY: "0"
+      E2E_REQUIRE_ALL: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Install the latest OpenCode 1 and OpenCode 2 side by side
+        run: |
+          npm install -g --prefix "$RUNNER_TEMP/opencode1" "opencode-ai@latest"
+          npm install -g --prefix "$RUNNER_TEMP/opencode2" "@opencode/cli@latest"
+          echo "OPENCODE_V1_BIN=$RUNNER_TEMP/opencode1/bin/opencode" >> "$GITHUB_ENV"
+          echo "OPENCODE_V2_BIN=$RUNNER_TEMP/opencode2/bin/opencode2" >> "$GITHUB_ENV"
+      - run: npm run test:e2e
