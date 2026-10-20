@@ -1,20 +1,50 @@
 # envsitter-guard
 
-OpenCode plugin that prevents agents/tools from reading or editing sensitive `.env*` files, while still allowing safe inspection via EnvSitter (keys + deterministic fingerprints; never values).
+[![CI](https://github.com/boxpositron/envsitter-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/boxpositron/envsitter-guard/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/envsitter-guard)](https://www.npmjs.com/package/envsitter-guard)
+
+OpenCode plugin that prevents agents/tools from reading or editing sensitive `.env` files, while still allowing safe inspection via EnvSitter (keys + deterministic fingerprints; never values).
+
+Docs: https://boxpositron.github.io/envsitter/guard/
+
+One package supports both OpenCode majors:
+
+- **OpenCode 2** (`@opencode/plugin` API, 2.0.32+): loaded through the default export's `id` + `setup()`.
+- **OpenCode 1** (1.18.29+): loaded through the same default export's `server()`.
+
+## Compatibility
+
+| OpenCode | Minimum | Verified end to end | Entry point | Built-in tools covered |
+|----------|---------|---------------------|-------------|------------------------|
+| 2.x | 2.0.32 | 2.0.32, 2.1.0 | `setup(ctx)` | `read`, `write`, `edit`, `patch`, `shell`, `grep` |
+| 1.x | 1.18.29 | 1.18.31, 1.19.3 | `server()` | `read`, `write`, `edit`, `apply_patch`, `bash`, `grep` |
+
+"Verified end to end" means `npm run test:e2e` passed against that CLI: the plugin loaded, all 15 `envsitter_*` tools were visible to the model, and every blocking scenario held (see [Development](#development)).
 
 ## Quickstart (OpenCode)
 
-OpenCode supports loading plugins from npm or local plugin files.
-
 Reference docs:
-- https://opencode.ai/docs/plugins/
-- https://opencode.ai/docs/config/#plugins
+- OpenCode 2: https://opencode.ai/v2/docs/plugins
+- OpenCode 1: https://opencode.ai/docs/plugins/
 
-### Option A (recommended): load from npm via `opencode.json`
+### Option A (recommended): load from npm
 
-Add the plugin package to your OpenCode config.
+OpenCode 2 (`opencode.json` uses `plugins`, plural):
 
-`opencode.json`:
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["envsitter-guard@latest"]
+}
+```
+
+Or install it globally with the OpenCode 2 CLI:
+
+```bash
+opencode plugin add envsitter-guard@latest
+```
+
+OpenCode 1 (`plugin`, singular; OpenCode 2 also accepts this V1 key):
 
 ```json
 {
@@ -23,7 +53,7 @@ Add the plugin package to your OpenCode config.
 }
 ```
 
-Restart OpenCode after updating config.
+Restart OpenCode after updating config (OpenCode 2 reloads watched config automatically).
 
 ## Why
 
@@ -77,20 +107,29 @@ Notes for file operations:
 
 ### Blocking behavior
 
-- Sensitive paths: `.env`, `.env.local`, `.env.production`, etc. (`.env*`)
-- Allowed: `.env.example`
-- Always blocked: `.envsitter/pepper`
+Protected files come from envsitter's path policy (`isSensitiveEnvFile` / `isEnvSitterPepperFile`):
 
-Blocked operations via tool hooks:
+- Protected: `.env`, `.env.<anything>`, `<name>.env`, `<name>.env.<anything>` (e.g. `.env.local`, `api.env`, `config.env.local`)
+- Readable: example/template files `.env.example`, `.env.sample`, `.env.template`, `.env.dist`, `.env.default(s)`
+- Not env files: source files such as `app.env.ts`
+- Always protected: `.envsitter/pepper`
 
-- `read` on sensitive `.env*` paths
-- `edit` / `write` / `patch` / `multiedit` on sensitive `.env*` paths
+Blocked operations:
+
+- Any non-EnvSitter tool whose path arguments (`filePath`, `path`, `file_path`, `paths`) point at a protected file: `read`, `edit`, `write`, `grep` on a file, MCP filesystem tools, and so on
+- `patch` / `apply_patch` when the patch adds, updates, moves, or deletes a protected file
+- Shell commands (`bash` / `shell`) that name a protected file, e.g. `cat .env`, `source .env`, `echo X >> .env`, `node --env-file=.env` (envsitter CLI calls such as `npx envsitter keys --file .env` are allowed)
+- `grep` results: matches inside protected files are removed from the output
+- Secret values in tool output: secret-looking values from the project's protected env files are replaced with `[envsitter: KEY redacted]` in the result of every non-EnvSitter tool (shell, `read` of other files, `grep`, MCP tools). The plugin finds env files up to three directories deep, skipping `node_modules`, `.git`, and build output, and re-reads them when they change. Which values count as secret is decided by envsitter's redactor (see the envsitter README).
+- OpenCode 2 only: a permission `evaluate` hook also denies `read`, `edit`, and `shell` permission checks on protected files, including tool calls made from Code Mode
 
 When blocked, the plugin throws an error with guidance on which EnvSitter tools to use instead.
 
+Limits: this is a guardrail against accidental reads, not a sandbox. Commands that reach file contents without naming the file (`grep -r TOKEN .`, `cat *`, variables, `eval`) are not blocked; their output is scrubbed instead, which catches values as written but not encoded or transformed ones (base64, split strings) or values that do not look secret. Custom pepper locations are not recognized.
+
 ## Tools
 
-Tools only operate on `.env`-style files inside the current project.
+Tools only operate on dotenv files (`.env*`, `*.env`, including examples) inside the current project.
 
 - Most tools accept a `filePath` that defaults to `.env`.
 - File operations are dry-run unless `write: true` is provided.
@@ -319,7 +358,7 @@ Example (inside OpenCode):
 
 ### Option B: local plugin file (project-level)
 
-If you want a local plugin file in-repo (or need local overrides), create `.opencode/plugin/envsitter-guard.ts`:
+If you want a local plugin file in-repo (or need local overrides), create `.opencode/plugins/envsitter-guard.ts` (OpenCode 2) or `.opencode/plugin/envsitter-guard.ts` (OpenCode 1; OpenCode 2 also scans this directory):
 
 ```ts
 import EnvSitterGuard from "envsitter-guard";
@@ -338,11 +377,11 @@ Then create `.opencode/package.json` with the dependency so OpenCode can install
 }
 ```
 
-Restart OpenCode; files in `.opencode/plugin/` are loaded automatically.
+Restart OpenCode; files in `.opencode/plugins/` (and `.opencode/plugin/`) are loaded automatically.
 
 ### Option C: global plugin file
 
-Place a plugin file in `~/.config/opencode/plugin/` if you want it enabled for all projects.
+Place a plugin file in `~/.config/opencode/plugins/` (OpenCode 2) or `~/.config/opencode/plugin/` (OpenCode 1) if you want it enabled for all projects.
 
 (You can use the same contents as Option B.)
 
@@ -366,11 +405,59 @@ npm run typecheck
 npm test
 ```
 
+### End-to-end check against OpenCode 1 and 2
+
+```bash
+npm run test:e2e
+```
+
+`scripts/e2e-opencode.mjs` builds the plugin, then runs the real `opencode` (1.x) and `opencode2` (2.x) CLIs against a scripted OpenAI-compatible model served on `127.0.0.1`. For each version it checks what the model gets back from each tool:
+
+- `envsitter_keys` lists keys without values, and all 15 `envsitter_*` tools are offered directly
+- `read` of `.env` is blocked, `read` of `.env.example` is allowed
+- `write` to `.env` and a patch adding `.env.local` are blocked, and the files stay untouched
+- `cat .env` through the shell tool is blocked
+- `cat logs/app.log` through the shell tool and `read` of that log return the token in it as `[envsitter: API_TOKEN redacted]`
+- `grep` results omit matches inside `.env`
+
+Each version runs in its own temporary `HOME` with fake secrets, so your real config, credentials, and session database are never read or modified, and no paid model is called. A version whose CLI is missing is skipped. CI runs the check against the minimum and latest-tested versions on every push, and `.github/workflows/e2e-latest.yml` runs it weekly against the newest `opencode-ai` and `@opencode/cli` releases.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `OPENCODE_V1_BIN` | `opencode` | OpenCode 1 CLI to test |
+| `OPENCODE_V2_BIN` | `opencode2` | OpenCode 2 CLI to test |
+| `KEEP_E2E` | unset | `1` keeps the temporary projects for inspection |
+| `E2E_REQUIRE_ALL` | unset | `1` fails instead of skipping when a CLI is missing (CI sets it) |
+
+### Running OpenCode 2 next to OpenCode 1
+
+The OpenCode 2 curl installer replaces the OpenCode 1 binary. To keep both, install OpenCode 2 from npm into its own prefix; the package also ships an `opencode2` command:
+
+```bash
+npm install -g --prefix ~/.local/opt/opencode2 @opencode/cli
+~/.local/opt/opencode2/bin/opencode2 --version
+```
+
+OpenCode 2 reads the same config and data directories as OpenCode 1 and, by default, the same `opencode.db`, which it migrates in place. Give it its own database unless you mean to migrate:
+
+```bash
+OPENCODE_DB=opencode-v2.db ~/.local/opt/opencode2/bin/opencode2
+```
+
 ### Build (for publishing)
 
 ```bash
 npm run build
 ```
+
+### Releasing
+
+Releases are published by GitHub Actions with npm trusted publishing, so no npm token is stored anywhere and every version ships with a provenance attestation.
+
+1. Release `envsitter` first when this version depends on a new one, then run `npm install` here so `package-lock.json` picks it up.
+2. Bump `version` in `package.json` and replace `(Unreleased)` in the matching `CHANGELOG.md` heading with the release date.
+3. Commit, then push a matching tag: `git tag v0.1.0 && git push origin main v0.1.0`.
+4. The Release workflow reruns CI, including the OpenCode 1 + 2 end-to-end check (pinned in `.github/workflows/ci.yml`), checks that the tag, `package.json`, and the CHANGELOG agree, publishes to npm (prereleases go to the `next` dist-tag), and creates the GitHub Release from the CHANGELOG section.
 
 ## Related
 
