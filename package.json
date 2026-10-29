@@ -1,6 +1,6 @@
 {
   "name": "envsitter-guard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OpenCode plugin (OpenCode 1 and 2) that prevents agents/tools from reading or editing sensitive .env files, while still allowing safe inspection via EnvSitter.",
   "license": "MIT",
   "homepage": "https://boxpositron.github.io/envsitter/guard/",

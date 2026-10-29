@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.1 (2026-10-29)
+
+### Fixed
+
+- Output scrubbing no longer fails tool calls ([#4](https://github.com/boxpositron/envsitter-guard/issues/4)). Folders the system refuses to list (macOS reports `EPERM` for `~/.Trash` and similar) are skipped, and env-named files that are not dotenv, such as React Native's `ios/.xcode.env`, no longer abort the scan. If scanning still fails unexpectedly, the hook keeps the last working scrub instead of failing the call.
+- Sessions outside a repository no longer scan the whole disk ([#5](https://github.com/boxpositron/envsitter-guard/issues/5)). OpenCode reports the filesystem root as the project root there; the guard now uses the session directory instead, for both the output scan and the EnvSitter tools' path checks. A home directory or filesystem root is only checked at its top level.
+
+### Changed
+
+- The env file scan visits at most 1,000 folders, skips common dependency and cache folders, and reuses the file list for 2 seconds (file contents are still re-checked on every call), so tool calls no longer pay for a full rescan.
+- Depends on `envsitter` `^0.1.1`, whose redactor skips invalid lines, so one malformed line no longer stops a file's valid secrets from being scrubbed.
+
+Thanks to @LZmx and @balaji-dutt for the detailed reports and reproducers.
+
 ## 0.1.0 (2026-10-21)
 
 ### Added
