@@ -41,6 +41,13 @@ export type ToolEnvironment = {
     readonly root: string;
 };
 
+// For sessions outside a repository OpenCode reports the filesystem root as the project root. Use the session
+// directory there instead, so the tools and the output scan stay inside it rather than covering the whole disk.
+export function projectRoot(root: string, directory: string): string {
+    const resolved = path.resolve(root);
+    return path.parse(resolved).root === resolved ? path.resolve(directory) : root;
+}
+
 export type GuardTool = {
     readonly name: string;
     readonly description: string;

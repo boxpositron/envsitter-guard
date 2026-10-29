@@ -98,7 +98,7 @@ This plugin is security-sensitive. Follow these patterns:
 - Prefer minimal diffs; avoid refactors during bugfixes.
 - Keep behavior consistent with `lib/` patterns:
   - normalize paths before matching; decide "protected" only via envsitter's `isSensitiveEnvFile` / `isEnvSitterPepperFile`
-  - ensure file paths stay within the project root (V1 `worktree`, V2 `ctx.location.project.directory`)
+  - ensure file paths stay within the project root (V1 `worktree`, V2 `ctx.location.project.directory`, via `projectRoot()`, which swaps a filesystem-root project for the session directory)
   - block silently: throw an actionable `Error`, never show a toast (hook test asserts zero toasts)
 - Never add non-plugin exports to `index.ts`: OpenCode 1 throws when a plugin module exports anything else.
 - Add or change a tool once in `lib/tools.ts`; both adapters pick it up. Update `lib/help.ts` with it.

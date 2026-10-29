@@ -175,6 +175,25 @@ test("hides grep matches from protected env files", async () => {
     assert.ok(output.output.includes("1 match in protected .env files hidden"));
 });
 
+test("a session outside a repository scans its own directory, not the filesystem root", async (t) => {
+    const directory = await createTmpDir();
+    await fs.writeFile(path.join(directory, ".env"), "API_TOKEN=tok_live_9f8a7b6c5d4e\n");
+    const filesystemRoot = path.parse(directory).root;
+    const listed: string[] = [];
+    const realReaddir = fs.readdir.bind(fs) as (dir: string, options?: unknown) => Promise<unknown>;
+    t.mock.method(fs, "readdir", async (dir: string, options?: unknown) => {
+        listed.push(dir);
+        return realReaddir(dir, options);
+    });
+
+    const { after } = await getHooks({ directory, worktree: filesystemRoot });
+    const output = { title: "pwd", metadata: {}, output: "token tok_live_9f8a7b6c5d4e\n" };
+    await after({ ...call("bash"), args: { command: "pwd" } }, output);
+
+    assert.equal(output.output, "token [envsitter: API_TOKEN redacted]\n");
+    assert.ok(!listed.includes(filesystemRoot), "must not list the filesystem root");
+});
+
 test("scrubs secret values from any tool output, such as shell commands that never name .env", async () => {
     const worktree = await createTmpDir();
     await fs.writeFile(path.join(worktree, ".env"), "API_TOKEN=tok_live_9f8a7b6c5d4e\nNODE_ENV=development\n");

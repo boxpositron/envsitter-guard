@@ -3,11 +3,12 @@ import { tool } from "@opencode-ai/plugin/tool";
 
 import { blockedAccessMessage, findBlockedAccess, redactGrepOutput } from "./policy.js";
 import { createScrubLoader } from "./scrub.js";
-import { guardTools, type ToolEnvironment } from "./tools.js";
+import { guardTools, projectRoot, type ToolEnvironment } from "./tools.js";
 
 export const serverV1: Plugin = async ({ directory, worktree }) => {
-    const env: ToolEnvironment = { directory, root: worktree };
-    const loadScrub = createScrubLoader(worktree);
+    const root = projectRoot(worktree, directory);
+    const env: ToolEnvironment = { directory, root };
+    const loadScrub = createScrubLoader(root);
 
     const tools: NonNullable<Hooks["tool"]> = {};
     for (const guardTool of guardTools) {

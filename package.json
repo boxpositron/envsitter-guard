@@ -47,7 +47,7 @@
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.19.3",
-    "envsitter": "^0.1.0"
+    "envsitter": "^0.1.1"
   },
   "peerDependencies": {
     "@opencode/plugin": ">=2.0.32"

@@ -3,12 +3,12 @@ import type { JsonSchema } from "effect";
 
 import { blockedAccessMessage, findBlockedAccess, permissionDenial, redactGrepResult } from "./policy.js";
 import { createScrubLoader, scrubToolResult } from "./scrub.js";
-import { guardTools, type ToolEnvironment } from "./tools.js";
+import { guardTools, projectRoot, type ToolEnvironment } from "./tools.js";
 
 export async function setupV2(ctx: Plugin.Context): Promise<void> {
     const env: ToolEnvironment = {
         directory: ctx.location.directory,
-        root: ctx.location.project.directory,
+        root: projectRoot(ctx.location.project.directory, ctx.location.directory),
     };
     const loadScrub = createScrubLoader(env.root);
 

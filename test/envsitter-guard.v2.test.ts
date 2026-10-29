@@ -186,6 +186,24 @@ test("V2 execute.after scrubs secret values from shell results that never name .
     assert.equal(result.content[0]?.text, "./logs/app.log: api key [envsitter: API_TOKEN redacted]");
 });
 
+test("V2 sessions outside a repository scan the session directory, not the filesystem root", async (t) => {
+    const directory = await createProject({ ".env": "API_TOKEN=tok_live_9f8a7b6c5d4e\n" });
+    const filesystemRoot = path.parse(directory).root;
+    const listed: string[] = [];
+    const realReaddir = fs.readdir.bind(fs) as (dir: string, options?: unknown) => Promise<unknown>;
+    t.mock.method(fs, "readdir", async (dir: string, options?: unknown) => {
+        listed.push(dir);
+        return realReaddir(dir, options);
+    });
+
+    const { after } = await setupV2(directory, filesystemRoot);
+    const event = { ...toolEvent("shell", { command: "pwd" }), status: "completed", result: { content: "token tok_live_9f8a7b6c5d4e" } };
+    await after(event);
+
+    assert.equal((event.result as { content: string }).content, "token [envsitter: API_TOKEN redacted]");
+    assert.ok(!listed.includes(filesystemRoot), "must not list the filesystem root");
+});
+
 test("V2 permission evaluate denies protected read, edit, and shell resources only", async () => {
     const { evaluate } = await setupV2(await createProject({}));
 

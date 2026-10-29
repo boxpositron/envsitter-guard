@@ -185,6 +185,9 @@ function createProject(root, baseURL) {
     fs.writeFileSync(path.join(project, "src", "app.ts"), "export const token = process.env.API_TOKEN;\n");
     fs.mkdirSync(path.join(project, "logs"), { recursive: true });
     fs.writeFileSync(path.join(project, "logs", "app.log"), `request ok\nauth header: Bearer ${FAKE_SECRET}\n`);
+    // React Native's ios/.xcode.env matches the env-file naming but is a shell script; it must not break any tool call.
+    fs.mkdirSync(path.join(project, "ios"), { recursive: true });
+    fs.writeFileSync(path.join(project, "ios", ".xcode.env"), "export NODE_BINARY=$(command -v node)\nif [ -f .xcode.env.local ]; then\n  source .xcode.env.local\nfi\n");
     fs.writeFileSync(
         path.join(project, ".opencode", "plugin", "envsitter-guard.ts"),
         `export { default, EnvSitterGuard } from ${JSON.stringify(pluginEntry)};\n`,
